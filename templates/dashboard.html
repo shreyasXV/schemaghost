@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SchemaGhost 👻</title>
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --red: #e53e3e;
+    --orange: #f6821f;
+    --yellow: #f5c542;
+    --green: #38a169;
+    --text: #e2e8f0;
+    --muted: #718096;
+    --accent: #e53e3e;
+    --accent2: #f6821f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+  a { color: var(--orange); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .logo {
+    font-size: 22px;
+    font-weight: bold;
+    background: linear-gradient(135deg, var(--red), var(--orange));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 1px;
+  }
+  .header-meta {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .badge .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    animation: pulse 2s infinite;
+  }
+  .badge .dot.err { background: var(--red); animation: none; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .pattern-badge {
+    background: linear-gradient(135deg, rgba(229,62,62,0.15), rgba(246,130,31,0.15));
+    border-color: rgba(246,130,31,0.3);
+    color: var(--orange);
+    font-weight: bold;
+  }
+  .refresh-indicator {
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* ── Layout ── */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 16px;
+    display: grid;
+    gap: 20px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-subtitle {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Overview Stats ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0;
+  }
+  .stat-box {
+    padding: 18px 16px;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+  .stat-box:last-child { border-right: none; }
+  .stat-value {
+    font-size: 28px;
+    font-weight: bold;
+    line-height: 1.1;
+    background: linear-gradient(135deg, var(--red), var(--orange));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .conn-bar-wrap {
+    background: var(--border);
+    border-radius: 3px;
+    height: 4px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .conn-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--green), var(--orange), var(--red));
+    border-radius: 3px;
+    transition: width 0.5s ease;
+  }
+
+  /* ── Table ── */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 600px;
+  }
+  th {
+    padding: 9px 12px;
+    text-align: left;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    background: var(--surface2);
+  }
+  th:hover { color: var(--orange); }
+  th .sort-arrow { margin-left: 3px; opacity: 0.4; }
+  th.sorted .sort-arrow { opacity: 1; color: var(--orange); }
+  td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 220px;
+    text-overflow: ellipsis;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .tenant-id {
+    color: var(--orange);
+    font-weight: bold;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+  }
+  .num { text-align: right; }
+  .num td { text-align: right; }
+
+  /* Latency bar cells */
+  .latency-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mini-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 40px;
+  }
+  .mini-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--green), var(--orange));
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+  .mini-bar-fill.danger { background: linear-gradient(90deg, var(--orange), var(--red)); }
+
+  /* Query cells */
+  .query-text {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #a0aec0;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+  }
+
+  /* Rank badges */
+  .rank { font-size: 13px; }
+  .rank-1 { color: #ffd700; }
+  .rank-2 { color: #c0c0c0; }
+  .rank-3 { color: #cd7f32; }
+
+  /* Empty state */
+  .empty {
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--muted);
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+
+  /* Responsive tweaks */
+  @media (max-width: 640px) {
+    .stat-value { font-size: 22px; }
+    header { padding: 12px 14px; }
+    main { padding: 12px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SchemaGhost 👻</div>
+  <div class="header-meta">
+    <span class="badge pattern-badge">
+      <span id="pattern-text">{{.Pattern}}</span>
+    </span>
+    <span class="badge">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">connecting…</span>
+    </span>
+    <span class="refresh-indicator" id="refresh-label">⟳ refreshing…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Overview -->
+  <div class="card" id="overview-card">
+    <div class="card-header">
+      <span class="card-title">📊 Resource Overview</span>
+      <span class="card-subtitle" id="collected-at"></span>
+    </div>
+    <div class="stats-grid" id="overview-stats">
+      <div class="stat-box">
+        <div class="stat-value" id="ov-connections">—</div>
+        <div class="stat-label">Connections</div>
+        <div class="conn-bar-wrap"><div class="conn-bar" id="conn-bar" style="width:0%"></div></div>
+        <div class="stat-sub" id="ov-max-conn"></div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="ov-qps">—</div>
+        <div class="stat-label">Queries / sec</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="ov-cache">—</div>
+        <div class="stat-label">Cache Hit %</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="ov-tenants">{{.Tenants}}</div>
+        <div class="stat-label">Tenants</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tenant Leaderboard -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🏆 Tenant Leaderboard</span>
+      <span class="card-subtitle">Click column headers to sort</span>
+    </div>
+    <div class="table-wrap">
+      <table id="tenant-table">
+        <thead>
+          <tr>
+            <th onclick="sortTable('tenant-table',0)" data-col="0"># <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',1)" data-col="1">Tenant <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',2)" data-col="2" class="num">Queries <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',4)" data-col="4" class="num">P50 ms <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',5)" data-col="5" class="num">P95 ms <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',6)" data-col="6" class="num">P99 ms <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',7)" data-col="7" class="num">Rows Read <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',8)" data-col="8" class="num">Conns <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('tenant-table',9)" data-col="9" class="num">I/O <span class="sort-arrow">↕</span></th>
+          </tr>
+        </thead>
+        <tbody id="tenant-tbody">
+          <tr><td colspan="10" class="empty">Loading tenant data…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Top Slow Queries -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🐌 Top Slow Queries</span>
+      <span class="card-subtitle">Ranked by avg execution time</span>
+    </div>
+    <div class="table-wrap">
+      <table id="query-table">
+        <thead>
+          <tr>
+            <th data-col="0"># <span class="sort-arrow"></span></th>
+            <th onclick="sortTable('query-table',1)" data-col="1">Query <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('query-table',2)" data-col="2">Tenant <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('query-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('query-table',4)" data-col="4" class="num">Calls <span class="sort-arrow">↕</span></th>
+            <th onclick="sortTable('query-table',5)" data-col="5" class="num">Rows <span class="sort-arrow">↕</span></th>
+          </tr>
+        </thead>
+        <tbody id="query-tbody">
+          <tr><td colspan="6" class="empty">Loading query data…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  SchemaGhost 👻 · Multi-tenant PostgreSQL observability ·
+  <a href="/api/health" target="_blank">/api/health</a> ·
+  <a href="/api/config" target="_blank">/api/config</a>
+</footer>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let sortState = {};
+let maxP99 = 1;
+let maxConn = 1;
+
+// ── Fetch helpers ──────────────────────────────────────────────────────
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url} returned ${r.status}`);
+  return r.json();
+}
+
+// ── Format helpers ─────────────────────────────────────────────────────
+function fmtNum(n) {
+  if (n == null) return '—';
+  if (n >= 1e9) return (n/1e9).toFixed(1)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return Number(n).toFixed(0);
+}
+
+function fmtMs(ms) {
+  if (ms == null || ms === 0) return '—';
+  if (ms >= 1000) return (ms/1000).toFixed(2)+'s';
+  return ms.toFixed(1)+'ms';
+}
+
+function fmtBytes(b) {
+  if (!b || b === 0) return '—';
+  if (b >= 1073741824) return (b/1073741824).toFixed(1)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
+  if (b >= 1024) return (b/1024).toFixed(1)+' KB';
+  return b+' B';
+}
+
+function rankEmoji(i) {
+  if (i === 0) return '<span class="rank rank-1">🥇</span>';
+  if (i === 1) return '<span class="rank rank-2">🥈</span>';
+  if (i === 2) return '<span class="rank rank-3">🥉</span>';
+  return `<span class="rank">${i+1}</span>`;
+}
+
+function miniBar(val, maxVal, danger) {
+  const pct = maxVal > 0 ? Math.min(100, (val/maxVal)*100) : 0;
+  return `<div class="latency-cell">
+    <span>${fmtMs(val)}</span>
+    <div class="mini-bar"><div class="mini-bar-fill${danger?' danger':''}" style="width:${pct}%"></div></div>
+  </div>`;
+}
+
+// ── Render Overview ────────────────────────────────────────────────────
+function renderOverview(ov) {
+  document.getElementById('ov-connections').textContent = ov.total_connections ?? '—';
+  document.getElementById('ov-qps').textContent = ov.queries_per_sec != null
+    ? ov.queries_per_sec.toFixed(1) : '—';
+  document.getElementById('ov-cache').textContent = ov.cache_hit_ratio != null
+    ? ov.cache_hit_ratio.toFixed(1)+'%' : '—';
+  if (ov.collected_at) {
+    const d = new Date(ov.collected_at);
+    document.getElementById('collected-at').textContent =
+      'as of ' + d.toLocaleTimeString();
+  }
+  // Connection bar
+  if (ov.max_connections && ov.total_connections) {
+    const pct = (ov.total_connections / ov.max_connections * 100).toFixed(0);
+    document.getElementById('conn-bar').style.width = pct+'%';
+    document.getElementById('ov-max-conn').textContent = `of ${ov.max_connections} max`;
+  }
+}
+
+// ── Render Tenant Table ─────────────────────────────────────────────────
+function renderTenants(tenants) {
+  const tbody = document.getElementById('tenant-tbody');
+  if (!tenants || tenants.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tenant data available yet. Waiting for queries…</td></tr>';
+    document.getElementById('ov-tenants').textContent = '0';
+    return;
+  }
+
+  // Update tenant count
+  document.getElementById('ov-tenants').textContent = tenants.length;
+
+  // Find max values for relative bars
+  maxP99 = Math.max(1, ...tenants.map(t => t.p99_ms || 0));
+
+  const rows = tenants.map((t, i) => {
+    return `<tr>
+      <td>${rankEmoji(i)}</td>
+      <td><span class="tenant-id" title="${t.tenant_id}">${t.tenant_id}</span></td>
+      <td class="num">${fmtNum(t.queries)}</td>
+      <td class="num">${fmtMs(t.avg_time_ms)}</td>
+      <td class="num">${miniBar(t.p50_ms, maxP99, false)}</td>
+      <td class="num">${miniBar(t.p95_ms, maxP99, t.p95_ms > maxP99*0.5)}</td>
+      <td class="num">${miniBar(t.p99_ms, maxP99, true)}</td>
+      <td class="num">${fmtNum(t.rows_read)}</td>
+      <td class="num">${t.connections || 0}</td>
+      <td class="num">${fmtBytes(t.io_bytes)}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('');
+}
+
+// ── Render Query Table ─────────────────────────────────────────────────
+function renderQueries(queries) {
+  const tbody = document.getElementById('query-tbody');
+  if (!queries || queries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No query data available. Enable pg_stat_statements for query metrics.</td></tr>';
+    return;
+  }
+
+  const maxAvg = Math.max(1, ...queries.map(q => q.avg_time_ms || 0));
+
+  const rows = queries.map((q, i) => {
+    const pct = maxAvg > 0 ? Math.min(100, (q.avg_time_ms/maxAvg)*100) : 0;
+    return `<tr>
+      <td>${i+1}</td>
+      <td><span class="query-text" title="${escHtml(q.query)}">${escHtml(q.query)}</span></td>
+      <td><span class="tenant-id" title="${q.tenant_id}">${q.tenant_id || '—'}</span></td>
+      <td class="num">
+        <div class="latency-cell">
+          <span>${fmtMs(q.avg_time_ms)}</span>
+          <div class="mini-bar"><div class="mini-bar-fill danger" style="width:${pct}%"></div></div>
+        </div>
+      </td>
+      <td class="num">${fmtNum(q.calls)}</td>
+      <td class="num">${fmtNum(q.rows)}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('');
+}
+
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Sort Table ─────────────────────────────────────────────────────────
+function sortTable(tableId, col) {
+  const table = document.getElementById(tableId);
+  const tbody = table.querySelector('tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (rows.length <= 1) return;
+
+  const key = tableId + ':' + col;
+  const asc = sortState[key] === 'asc' ? 'desc' : 'asc';
+  sortState[key] = asc;
+
+  // Update sort arrow UI
+  table.querySelectorAll('th').forEach((th, i) => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (!arrow) return;
+    if (i === col) {
+      th.classList.add('sorted');
+      arrow.textContent = asc === 'asc' ? '↑' : '↓';
+    } else {
+      th.classList.remove('sorted');
+      arrow.textContent = '↕';
+    }
+  });
+
+  rows.sort((a, b) => {
+    const aCell = a.cells[col]?.textContent.trim() || '';
+    const bCell = b.cells[col]?.textContent.trim() || '';
+    const aNum = parseFloat(aCell.replace(/[^0-9.\-]/g, ''));
+    const bNum = parseFloat(bCell.replace(/[^0-9.\-]/g, ''));
+    if (!isNaN(aNum) && !isNaN(bNum)) {
+      return asc === 'asc' ? aNum - bNum : bNum - aNum;
+    }
+    return asc === 'asc' ? aCell.localeCompare(bCell) : bCell.localeCompare(aCell);
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+// ── Status indicator ───────────────────────────────────────────────────
+function setStatus(ok, msg) {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = 'dot' + (ok ? '' : ' err');
+  txt.textContent = msg;
+}
+
+// ── Main refresh loop ──────────────────────────────────────────────────
+let countdown = 5;
+async function refresh() {
+  const label = document.getElementById('refresh-label');
+  label.textContent = '⟳ refreshing…';
+  try {
+    const [health, tenants, queries] = await Promise.all([
+      fetchJSON('/api/health'),
+      fetchJSON('/api/tenants'),
+      fetchJSON('/api/queries'),
+    ]);
+
+    renderOverview(health.overview || {});
+    renderTenants(tenants);
+    renderQueries(queries);
+
+    // Update pattern
+    if (health.pattern) {
+      document.getElementById('pattern-text').textContent = health.pattern;
+    }
+
+    setStatus(true, `connected · ${health.tenants ?? 0} tenants`);
+    label.textContent = '✓ live';
+  } catch (e) {
+    setStatus(false, 'error: ' + e.message);
+    label.textContent = '✗ error';
+    console.error(e);
+  }
+
+  // Schedule next refresh
+  countdown = 5;
+  const tick = setInterval(() => {
+    countdown--;
+    if (countdown <= 0) {
+      clearInterval(tick);
+      refresh();
+    } else {
+      label.textContent = `⟳ ${countdown}s`;
+    }
+  }, 1000);
+}
+
+// Start on load
+document.addEventListener('DOMContentLoaded', refresh);
+</script>
+</body>
+</html>
