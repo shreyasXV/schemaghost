@@ -23,6 +23,14 @@ var (
 )
 
 func main() {
+	// Check for --mcp flag
+	mcpMode := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--mcp" {
+			mcpMode = true
+		}
+	}
+
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL environment variable is required")
@@ -131,6 +139,13 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	} else {
 		data := collector.GetData()
 		historyStore.Record(data)
+		costEstimator.Estimate(data)
+	}
+
+	// MCP mode: run JSON-RPC server over stdin/stdout
+	if mcpMode {
+		runMCP()
+		return
 	}
 
 	mux := http.NewServeMux()
@@ -155,6 +170,13 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 
 	// Cost attribution
 	mux.HandleFunc("/api/costs", handleCosts)
+
+	// Agent-native API
+	mux.HandleFunc("/api/agents/status", handleAgentStatus)
+	mux.HandleFunc("/api/agents/noisy", handleAgentNoisy)
+	mux.HandleFunc("/api/agents/tenant/", handleAgentTenant)
+	mux.HandleFunc("/api/agents/costs", handleAgentCosts)
+	mux.HandleFunc("/api/agents/recommendation", handleAgentRecommendation)
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)

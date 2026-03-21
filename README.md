@@ -46,6 +46,71 @@ Open [http://localhost:8080](http://localhost:8080) — that's it.
 
 ---
 
+## For AI Agents
+
+> **SchemaGhost is AI-native.** It exposes an MCP server and agent-optimized REST API so that AI agents (Claude, GPT, Cursor, custom copilots) can query tenant health, identify noisy neighbors, attribute costs, and throttle runaway tenants — all programmatically, in real time.
+
+---
+
+## MCP Integration (Model Context Protocol)
+
+AI agents connect via MCP to query tenant health over JSON-RPC 2.0 (stdio transport).
+
+### Setup
+
+Add to your `claude_desktop_config.json` (or equivalent MCP client config):
+
+```json
+{
+  "mcpServers": {
+    "cordon": {
+      "command": "./schemaghost",
+      "args": ["--mcp"],
+      "env": {
+        "DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|---|---|
+| `list_tenants` | All tenants with current metrics and cost |
+| `get_tenant` | Detailed metrics for one tenant |
+| `get_noisy_tenants` | Tenants above avg query time threshold |
+| `get_costs` | Cost attribution for all tenants |
+| `get_tenant_cost` | Cost for a specific tenant |
+| `throttle_tenant` | Cancel or terminate a tenant's active queries |
+| `get_health` | Overall DB health (connections, cache hit, QPS, alerts) |
+| `get_throttle_events` | Recent throttle events |
+
+### Example (Claude Desktop)
+
+> "Which tenants are noisy right now?"
+
+Claude calls `get_noisy_tenants` and returns a summary like:
+> "acme_corp has avg query time 234ms (45% of resources). Recommend throttling."
+
+---
+
+## Agent-Native REST API
+
+Higher-level endpoints designed for AI agents. Every response includes a `summary` field with plain-English descriptions.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/agents/status` | GET | One-call overview: healthy, noisy tenants, alerts, throttle events |
+| `/api/agents/noisy` | GET | Noisy tenants with actionable context |
+| `/api/agents/tenant/{id}` | GET | Tenant detail with plain-english summary |
+| `/api/agents/tenant/{id}` | POST | Throttle a tenant (`{"action": "cancel"}`) |
+| `/api/agents/costs` | GET | Simplified cost view |
+| `/api/agents/recommendation` | GET | Suggested actions based on current state |
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -61,7 +126,9 @@ graph LR
 
 ```
 schemaghost/
-├── main.go          # HTTP server, startup, background loop
+├── main.go          # HTTP server, startup, background loop, --mcp flag
+├── mcp.go           # MCP server (JSON-RPC 2.0 over stdio)
+├── agent_api.go     # Agent-native REST API with plain-english summaries
 ├── collector.go     # Metrics collection from pg_stat_* views
 ├── detector.go      # Tenant isolation pattern auto-detection
 ├── dashboard.go     # HTTP handlers + HTML dashboard
@@ -70,6 +137,7 @@ schemaghost/
 ├── cost.go          # Per-tenant cost attribution
 ├── slack.go         # Slack webhook notifications
 ├── history.go       # In-memory time-series + export
+├── mcp_config.json  # Example MCP client configuration
 └── templates/
     └── dashboard.html
 ```
@@ -172,7 +240,6 @@ This starts PostgreSQL with demo tenant schemas pre-seeded, plus SchemaGhost on 
 
 ## Roadmap
 
-- **MCP Server** — Model Context Protocol integration for AI agents to query tenant health
 - **AI Anomaly Detection** — ML-based anomaly detection for tenant behavior
 - **Predictive Throttling** — Anticipate resource spikes before they happen
 - **eBPF Integration** — Kernel-level query tracing for zero-overhead observability

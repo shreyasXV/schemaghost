@@ -72,6 +72,12 @@ func (d *Detector) Detect() error {
 		return nil
 	}
 
+	if detected, err := d.detectDatabasePerTenant(); err != nil {
+		d.DetectionNotes = append(d.DetectionNotes, fmt.Sprintf("database-per-tenant detection error: %v", err))
+	} else if detected {
+		return nil
+	}
+
 	d.DetectionNotes = append(d.DetectionNotes, "no multi-tenant pattern detected; treating as single-tenant")
 	d.Pattern = PatternUnknown
 	d.Tenants = []string{"default"}
@@ -411,6 +417,45 @@ func sanitizeIdentifier(s string) string {
 		return "unknown"
 	}
 	return `"` + clean + `"`
+}
+
+func (d *Detector) detectDatabasePerTenant() (bool, error) {
+	rows, err := d.db.Query(`
+		SELECT datname FROM pg_database
+		WHERE datistemplate = false
+		  AND datname NOT IN ('postgres', 'template0', 'template1')
+		ORDER BY datname
+	`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	var databases []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		databases = append(databases, name)
+	}
+
+	if len(databases) < 2 {
+		return false, nil
+	}
+
+	// Only flag database-per-tenant if we didn't already detect schema or row-level
+	if d.Pattern == PatternSchema || d.Pattern == PatternRowLevel {
+		return false, nil
+	}
+
+	d.Pattern = PatternDatabase
+	d.Tenants = databases
+	d.DetectionNotes = append(d.DetectionNotes,
+		fmt.Sprintf("found %d user databases suggesting database-per-tenant pattern", len(databases)),
+		"note: cross-database per-tenant collection is planned; currently monitoring connected database only",
+	)
+	return true, nil
 }
 
 // pqStringArray converts a []string to a format suitable for $1 = ANY($1) queries

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cordon": {
+      "command": "./schemaghost",
+      "args": ["--mcp"],
+      "env": {
+        "DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"
+      }
+    }
+  }
+}
