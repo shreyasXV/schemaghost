@@ -55,10 +55,10 @@ func handleQueries(w http.ResponseWriter, r *http.Request) {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	data := collector.GetData()
 	status := map[string]interface{}{
-		"status":      "ok",
-		"pattern":     string(detector.Pattern),
-		"tenants":     len(detector.Tenants),
-		"overview":    data.Overview,
+		"status":       "ok",
+		"pattern":      string(detector.Pattern),
+		"tenants":      len(detector.Tenants),
+		"overview":     data.Overview,
 		"collected_at": data.Overview.CollectedAt,
 	}
 	writeJSON(w, status)

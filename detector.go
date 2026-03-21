@@ -226,6 +226,9 @@ func (d *Detector) detectRowLevel() (bool, error) {
 	return true, nil
 }
 
+// TenantNameMap maps tenant IDs to human-readable names
+var TenantNameMap map[string]string
+
 func (d *Detector) sampleTenantValues(column string) ([]string, error) {
 	// Find the table with the most rows that has this column
 	rows, err := d.db.Query(`
@@ -273,7 +276,130 @@ func (d *Detector) sampleTenantValues(column string) ([]string, error) {
 		}
 		tenants = append(tenants, fmt.Sprintf("%v", val))
 	}
+
+	// Try to resolve tenant IDs to names
+	d.resolveTenantNames(column, tenants)
+
 	return tenants, nil
+}
+
+// resolveTenantNames attempts to find a lookup table that maps tenant IDs to names
+// Common patterns: organizations(id, name), tenants(id, name), companies(id, name), etc.
+func (d *Detector) resolveTenantNames(tenantColumn string, tenantIDs []string) {
+	TenantNameMap = make(map[string]string)
+
+	// Figure out the reference table from foreign key constraints
+	refRows, err := d.db.Query(`
+		SELECT DISTINCT
+			ccu.table_schema, ccu.table_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name
+			AND tc.table_schema = kcu.table_schema
+		JOIN information_schema.constraint_column_usage ccu
+			ON ccu.constraint_name = tc.constraint_name
+			AND ccu.table_schema = tc.table_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+			AND LOWER(kcu.column_name) = $1
+		LIMIT 1
+	`, tenantColumn)
+	if err != nil {
+		return
+	}
+	defer refRows.Close()
+
+	if !refRows.Next() {
+		// No FK found, try common table names
+		d.tryCommonTenantTables(tenantIDs)
+		return
+	}
+
+	var refSchema, refTable string
+	if err := refRows.Scan(&refSchema, &refTable); err != nil {
+		return
+	}
+
+	// Check if the referenced table has a 'name', 'title', or 'slug' column
+	d.loadNamesFromTable(refSchema, refTable, tenantIDs)
+}
+
+func (d *Detector) tryCommonTenantTables(tenantIDs []string) {
+	commonTables := []string{
+		"organizations", "tenants", "companies", "accounts",
+		"workspaces", "teams", "clients", "customers",
+	}
+	for _, tbl := range commonTables {
+		var exists bool
+		err := d.db.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM information_schema.tables 
+				WHERE table_schema = 'public' AND table_name = $1
+			)
+		`, tbl).Scan(&exists)
+		if err == nil && exists {
+			d.loadNamesFromTable("public", tbl, tenantIDs)
+			if len(TenantNameMap) > 0 {
+				return
+			}
+		}
+	}
+}
+
+func (d *Detector) loadNamesFromTable(schema, table string, tenantIDs []string) {
+	// Find the name column
+	nameColumns := []string{"name", "title", "slug", "label", "display_name"}
+	var nameCol string
+	for _, nc := range nameColumns {
+		var exists bool
+		err := d.db.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = $1 AND table_name = $2 AND LOWER(column_name) = $3
+			)
+		`, schema, table, nc).Scan(&exists)
+		if err == nil && exists {
+			nameCol = nc
+			break
+		}
+	}
+	if nameCol == "" {
+		return
+	}
+
+	safeSchema := sanitizeIdentifier(schema)
+	safeTable := sanitizeIdentifier(table)
+	safeNameCol := sanitizeIdentifier(nameCol)
+
+	query := fmt.Sprintf(`SELECT id::text, %s FROM %s.%s`, safeNameCol, safeSchema, safeTable)
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		TenantNameMap[id] = name
+	}
+
+	if len(TenantNameMap) > 0 {
+		d.DetectionNotes = append(d.DetectionNotes,
+			fmt.Sprintf("resolved tenant names from %s.%s.%s (%d mappings)", schema, table, nameCol, len(TenantNameMap)))
+	}
+}
+
+// ResolveTenantName returns the human name for a tenant ID, or the ID itself
+func ResolveTenantName(id string) string {
+	if TenantNameMap == nil {
+		return id
+	}
+	if name, ok := TenantNameMap[id]; ok {
+		return name
+	}
+	return id
 }
 
 // sanitizeIdentifier removes anything that's not alphanumeric or underscore/dollar

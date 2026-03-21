@@ -12,9 +12,14 @@ import (
 )
 
 var (
-	db        *sql.DB
-	collector *Collector
-	detector  *Detector
+	db            *sql.DB
+	collector     *Collector
+	detector      *Detector
+	alertManager  *AlertManager
+	historyStore  *HistoryStore
+	slackBot      *SlackNotifier
+	throttler     *Throttler
+	costEstimator *CostEstimator
 )
 
 func main() {
@@ -27,6 +32,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// Optional env vars
+	slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL")
+	alertWebhookURL := os.Getenv("ALERT_WEBHOOK_URL")
 
 	var err error
 	db, err = sql.Open("postgres", dbURL)
@@ -57,11 +66,27 @@ To enable it, run as a superuser:
 And add to postgresql.conf:
   shared_preload_libraries = 'pg_stat_statements'
 
-Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-level metrics.
-`)
+Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-level metrics.`)
 	} else {
 		log.Println("✅ pg_stat_statements extension detected")
 	}
+
+	// Initialize subsystems
+	slackBot = NewSlackNotifier(slackWebhookURL)
+	alertManager = NewAlertManager(alertWebhookURL, slackBot)
+	historyStore = NewHistoryStore()
+	throttler = NewThrottler(slackBot)
+	costEstimator = NewCostEstimator()
+
+	if slackWebhookURL != "" {
+		log.Println("✅ Slack notifications enabled")
+	}
+	if alertWebhookURL != "" {
+		log.Printf("✅ Alert webhook configured: %s", alertWebhookURL)
+	}
+	log.Printf("✅ History store initialized (retention: %s)", os.Getenv("HISTORY_RETENTION"))
+	log.Printf("✅ Throttler initialized (enabled: %v)", throttler.GetConfig().Enabled)
+	log.Printf("✅ Cost estimator initialized (RDS hourly: $%.2f)", costEstimator.rdsHourlyCost)
 
 	detector = NewDetector(db)
 	collector = NewCollector(db)
@@ -76,6 +101,12 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 		}
 	}
 
+	// Get max connections for alert evaluation
+	var maxConns int
+	if err := db.QueryRow(`SHOW max_connections`).Scan(&maxConns); err != nil {
+		maxConns = 100
+	}
+
 	// Start background collection
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -83,6 +114,12 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 		for {
 			if err := collector.Collect(detector); err != nil {
 				log.Printf("Collection error: %v", err)
+			} else {
+				data := collector.GetData()
+				historyStore.Record(data)
+				alertManager.Evaluate(data, maxConns)
+				throttler.Evaluate(db, detector)
+				costEstimator.Estimate(data)
 			}
 			<-ticker.C
 		}
@@ -91,6 +128,9 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	// Run first collection immediately
 	if err := collector.Collect(detector); err != nil {
 		log.Printf("Initial collection warning: %v", err)
+	} else {
+		data := collector.GetData()
+		historyStore.Record(data)
 	}
 
 	mux := http.NewServeMux()
@@ -99,6 +139,26 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	mux.HandleFunc("/api/queries", handleQueries)
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/config", handleConfig)
+
+	// Alerts
+	mux.HandleFunc("/api/alerts", handleAlerts)
+	mux.HandleFunc("/api/alerts/history", handleAlertsHistory)
+	mux.HandleFunc("/api/alerts/rules", handleAlertsRules)
+
+	// History / time-series
+	mux.HandleFunc("/api/history", handleHistory)
+	mux.HandleFunc("/api/history/overview", handleHistoryOverview)
+
+	// Throttle
+	mux.HandleFunc("/api/throttle/status", handleThrottleStatus)
+	mux.HandleFunc("/api/throttle/config", handleThrottleConfig)
+
+	// Cost attribution
+	mux.HandleFunc("/api/costs", handleCosts)
+
+	// Export
+	mux.HandleFunc("/api/export/csv", handleExportCSV)
+	mux.HandleFunc("/api/export/json", handleExportJSON)
 
 	log.Printf("🚀 SchemaGhost running on http://0.0.0.0:%s", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
