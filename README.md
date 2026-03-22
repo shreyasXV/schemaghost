@@ -40,6 +40,8 @@ Open [http://localhost:8080](http://localhost:8080) — that's it.
 - **Threshold Alerts** — Configurable rules for latency, connections, cache hit, and I/O with Slack notifications
 - **Slack Integration** — Color-coded alert notifications with rate limiting (5min cooldown)
 - **Historical Trends** — In-memory time-series with sparklines and CSV/JSON export
+- **AI Anomaly Detection** — Statistical learning builds per-tenant baselines and detects deviations using z-score analysis (no LLM required)
+- **Predictive Throttling** — Linear regression on metric trends predicts when tenants will breach thresholds, with minutes-ahead warnings
 - **Slow Query Explorer** — Top queries with tenant attribution and fingerprinting
 - **Zero Dependencies** — Single Go binary, no frameworks, no build steps. Just `lib/pq`.
 - **Dark Dashboard** — Mobile-responsive, auto-refreshing UI with no external JS dependencies
@@ -86,6 +88,8 @@ Add to your `claude_desktop_config.json` (or equivalent MCP client config):
 | `throttle_tenant` | Cancel or terminate a tenant's active queries |
 | `get_health` | Overall DB health (connections, cache hit, QPS, alerts) |
 | `get_throttle_events` | Recent throttle events |
+| `get_anomalies` | Active anomalies detected by statistical learning |
+| `get_predictions` | Active predictions of threshold breaches |
 
 ### Example (Claude Desktop)
 
@@ -108,6 +112,8 @@ Higher-level endpoints designed for AI agents. Every response includes a `summar
 | `/api/agents/tenant/{id}` | POST | Throttle a tenant (`{"action": "cancel"}`) |
 | `/api/agents/costs` | GET | Simplified cost view |
 | `/api/agents/recommendation` | GET | Suggested actions based on current state |
+| `/api/agents/anomalies` | GET | Active anomalies with plain-english summaries |
+| `/api/agents/predictions` | GET | Predicted threshold breaches with summaries |
 
 ---
 
@@ -134,6 +140,8 @@ schemaghost/
 ├── dashboard.go     # HTTP handlers + HTML dashboard
 ├── alerting.go      # Threshold alerting engine
 ├── throttle.go      # Auto-throttling (cancel/terminate runaway queries)
+├── anomaly.go       # AI anomaly detection (statistical learning)
+├── predictor.go     # Predictive throttling (trend analysis)
 ├── cost.go          # Per-tenant cost attribution
 ├── slack.go         # Slack webhook notifications
 ├── history.go       # In-memory time-series + export
@@ -159,6 +167,9 @@ schemaghost/
 | `THROTTLE_ACTION` | `cancel` | `cancel` (pg_cancel_backend) or `terminate` (pg_terminate_backend) |
 | `THROTTLE_GRACE_PERIOD_MS` | `5000` | Wait time before escalating cancel to terminate |
 | `RDS_HOURLY_COST` | `0.50` | Hourly database cost in USD for cost attribution |
+| `ANOMALY_WINDOW_SIZE` | `30` | Rolling window size for anomaly baselines (number of collection cycles) |
+| `ANOMALY_SENSITIVITY` | `2.0` | Z-score threshold for anomaly detection (standard deviations) |
+| `PREDICT_THRESHOLD_MS` | `30000` | Query time threshold for predictive alerts (ms) |
 
 ---
 
@@ -208,6 +219,15 @@ schemaghost/
 | `GET /api/export/csv` | GET | Export metrics as CSV |
 | `GET /api/export/json` | GET | Export full snapshot as JSON |
 
+### Anomaly Detection & Predictions
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `GET /api/anomalies` | GET | Active anomalies, recent history, and baseline summaries |
+| `GET /api/anomalies/baseline?tenant=X` | GET | Full baseline data for one tenant |
+| `GET /api/predictions` | GET | Active threshold breach predictions |
+| `GET /api/predictions?tenant=X` | GET | Predictions for a specific tenant |
+
 ---
 
 ## Enabling pg_stat_statements
@@ -238,10 +258,18 @@ This starts PostgreSQL with demo tenant schemas pre-seeded, plus SchemaGhost on 
 
 ---
 
+## AI-Powered Observability
+
+SchemaGhost uses **statistical learning** (not LLMs) for genuine AI-powered analysis:
+
+- **Anomaly Detection** — Maintains per-tenant rolling baselines for avg query time, query count, connections, and rows read. Uses z-score analysis to detect deviations beyond configurable sensitivity (default: 2 standard deviations). Automatically resolves anomalies when metrics return to normal for 3 consecutive cycles.
+
+- **Predictive Throttling** — Applies linear regression to metric trends to project when a tenant will breach thresholds. Reports trend direction (accelerating/linear/decelerating), confidence (R-squared), and estimated minutes until breach. Predictions auto-expire after 10 minutes or when trends reverse.
+
+Both systems feed into the agent recommendation engine and send Slack notifications for critical events.
+
 ## Roadmap
 
-- **AI Anomaly Detection** — ML-based anomaly detection for tenant behavior
-- **Predictive Throttling** — Anticipate resource spikes before they happen
 - **eBPF Integration** — Kernel-level query tracing for zero-overhead observability
 
 ---

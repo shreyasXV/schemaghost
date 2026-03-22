@@ -44,12 +44,17 @@ func handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 		summary += fmt.Sprintf(" %d noisy tenant(s) detected.", len(noisy))
 	}
 
+	anomalyCount := len(anomalyDetector.GetActive())
+	predictionCount := len(predictor.GetPredictions())
+
 	writeJSON(w, map[string]interface{}{
 		"healthy":              healthy,
 		"noisy_tenants":        noisy,
 		"total_tenants":        len(data.Tenants),
 		"active_alerts":        len(activeAlerts),
 		"throttle_events_1h":   throttleCount,
+		"anomaly_count":        anomalyCount,
+		"prediction_count":     predictionCount,
 		"cache_hit_ratio":      data.Overview.CacheHitRatio,
 		"total_connections":    data.Overview.TotalConnections,
 		"qps":                  data.Overview.QueriesPerSec,
@@ -281,6 +286,30 @@ func handleAgentRecommendation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Include anomaly-based recommendations
+	for _, a := range anomalyDetector.GetActive() {
+		recommendations = append(recommendations, map[string]interface{}{
+			"type":      "anomaly",
+			"tenant_id": a.TenantID,
+			"severity":  a.Severity,
+			"summary":   fmt.Sprintf("Anomaly detected: %s (z-score: %.1f). %s", a.Metric, a.ZScore, a.Message),
+		})
+	}
+
+	// Include prediction-based recommendations
+	for _, p := range predictor.GetPredictions() {
+		sev := "medium"
+		if p.TimeToThresholdMin < 10 {
+			sev = "high"
+		}
+		recommendations = append(recommendations, map[string]interface{}{
+			"type":      "prediction",
+			"tenant_id": p.TenantID,
+			"severity":  sev,
+			"summary":   p.Message,
+		})
+	}
+
 	// Include active alerts as recommendations
 	for _, a := range activeAlerts {
 		recommendations = append(recommendations, map[string]interface{}{
@@ -299,6 +328,65 @@ func handleAgentRecommendation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"recommendations": recommendations,
 		"summary":         summary,
+	})
+}
+
+// handleAgentAnomalies returns active anomalies with summaries for AI agents
+func handleAgentAnomalies(w http.ResponseWriter, r *http.Request) {
+	active := anomalyDetector.GetActive()
+
+	var entries []map[string]interface{}
+	for _, a := range active {
+		entries = append(entries, map[string]interface{}{
+			"tenant_id":     a.TenantID,
+			"metric":        a.Metric,
+			"current_value": a.CurrentValue,
+			"baseline_mean": a.BaselineMean,
+			"z_score":       a.ZScore,
+			"severity":      a.Severity,
+			"summary":       a.Message,
+		})
+	}
+
+	summary := fmt.Sprintf("%d active anomaly(ies) detected.", len(active))
+	if len(active) == 0 {
+		summary = "No anomalies detected. All tenant metrics are within normal baselines."
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"anomalies": entries,
+		"count":     len(active),
+		"summary":   summary,
+	})
+}
+
+// handleAgentPredictions returns predictions with summaries for AI agents
+func handleAgentPredictions(w http.ResponseWriter, r *http.Request) {
+	preds := predictor.GetPredictions()
+
+	var entries []map[string]interface{}
+	for _, p := range preds {
+		entries = append(entries, map[string]interface{}{
+			"tenant_id":            p.TenantID,
+			"metric":               p.Metric,
+			"current_value":        p.CurrentValue,
+			"threshold_value":      p.ThresholdValue,
+			"time_to_threshold_min": p.TimeToThresholdMin,
+			"trend":                p.Trend,
+			"confidence":           p.Confidence,
+			"summary":              p.Message,
+		})
+	}
+
+	summary := fmt.Sprintf("%d active prediction(s).", len(preds))
+	if len(preds) == 0 {
+		summary = "No threshold breaches predicted. All tenant trends are stable."
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"predictions": entries,
+		"count":       len(preds),
+		"summary":     summary,
 	})
 }
 

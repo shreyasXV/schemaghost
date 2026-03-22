@@ -168,6 +168,22 @@ func mcpTools() []mcpTool {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			Name:        "get_anomalies",
+			Description: "Returns active anomalies detected by statistical learning (z-score analysis of tenant metrics)",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "get_predictions",
+			Description: "Returns active predictions of when tenants will exceed thresholds based on trend analysis",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 	}
 }
 
@@ -323,6 +339,10 @@ func executeMCPTool(name string, args map[string]interface{}) (interface{}, erro
 		return mcpGetHealth()
 	case "get_throttle_events":
 		return mcpGetThrottleEvents()
+	case "get_anomalies":
+		return mcpGetAnomalies()
+	case "get_predictions":
+		return mcpGetPredictions()
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -479,4 +499,41 @@ func mcpGetHealth() (interface{}, error) {
 
 func mcpGetThrottleEvents() (interface{}, error) {
 	return throttler.GetEvents(), nil
+}
+
+func mcpGetAnomalies() (interface{}, error) {
+	active := anomalyDetector.GetActive()
+	var summaries []map[string]interface{}
+	for _, a := range active {
+		summaries = append(summaries, map[string]interface{}{
+			"tenant_id": a.TenantID,
+			"metric":    a.Metric,
+			"severity":  a.Severity,
+			"z_score":   a.ZScore,
+			"summary":   a.Message,
+		})
+	}
+	return map[string]interface{}{
+		"active_count": len(active),
+		"anomalies":    summaries,
+	}, nil
+}
+
+func mcpGetPredictions() (interface{}, error) {
+	preds := predictor.GetPredictions()
+	var summaries []map[string]interface{}
+	for _, p := range preds {
+		summaries = append(summaries, map[string]interface{}{
+			"tenant_id":           p.TenantID,
+			"metric":              p.Metric,
+			"time_to_threshold":   p.TimeToThresholdMin,
+			"trend":               p.Trend,
+			"confidence":          p.Confidence,
+			"summary":             p.Message,
+		})
+	}
+	return map[string]interface{}{
+		"prediction_count": len(preds),
+		"predictions":      summaries,
+	}, nil
 }

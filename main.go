@@ -18,8 +18,10 @@ var (
 	alertManager  *AlertManager
 	historyStore  *HistoryStore
 	slackBot      *SlackNotifier
-	throttler     *Throttler
-	costEstimator *CostEstimator
+	throttler       *Throttler
+	costEstimator   *CostEstimator
+	anomalyDetector *AnomalyDetector
+	predictor       *Predictor
 )
 
 func main() {
@@ -85,6 +87,8 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	historyStore = NewHistoryStore()
 	throttler = NewThrottler(slackBot)
 	costEstimator = NewCostEstimator()
+	anomalyDetector = NewAnomalyDetector(slackBot)
+	predictor = NewPredictor()
 
 	if slackWebhookURL != "" {
 		log.Println("✅ Slack notifications enabled")
@@ -95,6 +99,8 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	log.Printf("✅ History store initialized (retention: %s)", os.Getenv("HISTORY_RETENTION"))
 	log.Printf("✅ Throttler initialized (enabled: %v)", throttler.GetConfig().Enabled)
 	log.Printf("✅ Cost estimator initialized (RDS hourly: $%.2f)", costEstimator.rdsHourlyCost)
+	log.Printf("✅ Anomaly detector initialized (window: %d, sensitivity: %.1f)", anomalyDetector.windowSize, anomalyDetector.sensitivity)
+	log.Printf("✅ Predictor initialized (threshold: %.0fms)", predictor.thresholdMs)
 
 	detector = NewDetector(db)
 	collector = NewCollector(db)
@@ -128,6 +134,8 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 				alertManager.Evaluate(data, maxConns)
 				throttler.Evaluate(db, detector)
 				costEstimator.Estimate(data)
+				anomalyDetector.Evaluate(data)
+				predictor.Evaluate(data)
 			}
 			<-ticker.C
 		}
@@ -171,12 +179,21 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	// Cost attribution
 	mux.HandleFunc("/api/costs", handleCosts)
 
+	// Anomaly detection
+	mux.HandleFunc("/api/anomalies", handleAnomalies)
+	mux.HandleFunc("/api/anomalies/baseline", handleTenantBaseline)
+
+	// Predictions
+	mux.HandleFunc("/api/predictions", handlePredictions)
+
 	// Agent-native API
 	mux.HandleFunc("/api/agents/status", handleAgentStatus)
 	mux.HandleFunc("/api/agents/noisy", handleAgentNoisy)
 	mux.HandleFunc("/api/agents/tenant/", handleAgentTenant)
 	mux.HandleFunc("/api/agents/costs", handleAgentCosts)
 	mux.HandleFunc("/api/agents/recommendation", handleAgentRecommendation)
+	mux.HandleFunc("/api/agents/anomalies", handleAgentAnomalies)
+	mux.HandleFunc("/api/agents/predictions", handleAgentPredictions)
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)
