@@ -57,6 +57,7 @@ var (
 	stringLiteralRe  = regexp.MustCompile(`'[^']*'`)
 	numericLiteralRe = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
 	whitespaceRe     = regexp.MustCompile(`\s+`)
+	schemaQualAllRe  = regexp.MustCompile(`(?i)(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)\.`)
 )
 
 // Overview holds global resource stats
@@ -187,6 +188,9 @@ func (c *Collector) collectTopQueries(d *Detector) ([]QueryStat, error) {
 		WHERE calls > 0
 		  AND query NOT LIKE '%pg_stat%'
 		  AND query NOT LIKE '%information_schema%'
+		  AND query NOT LIKE '%pg_database_size%'
+		  AND query NOT LIKE '%pg_size_pretty%'
+		  AND query NOT LIKE '%max_connections%'
 		  AND query NOT LIKE 'CREATE%'
 		  AND query NOT LIKE 'DROP%'
 		  AND query NOT LIKE 'ALTER%'
@@ -195,6 +199,7 @@ func (c *Collector) collectTopQueries(d *Detector) ([]QueryStat, error) {
 		  AND query NOT LIKE 'ANALYZE%'
 		  AND query NOT LIKE 'COPY%'
 		  AND query NOT LIKE 'SET%'
+		  AND query NOT LIKE 'SHOW%'
 		ORDER BY total_exec_time DESC
 		LIMIT 50
 	`)
@@ -540,11 +545,11 @@ func (c *Collector) collectDefaultMetrics() ([]TenantMetrics, error) {
 
 // extractTenantFromQuery tries to extract a tenant identifier from a SQL query
 func extractTenantFromQuery(query string, d *Detector) string {
+	lowerQ := strings.ToLower(query)
 	if d.Pattern == PatternSchema {
-		// Look for schema.table pattern
+		// Look for schema.table pattern anywhere in the query (handles subqueries, JOINs, pg_sleep wrappers)
 		for _, schema := range d.TenantSchemas {
-			if strings.Contains(strings.ToLower(query), strings.ToLower(schema)+".") ||
-				strings.Contains(strings.ToLower(query), "search_path") && strings.Contains(strings.ToLower(query), strings.ToLower(schema)) {
+			if strings.Contains(lowerQ, strings.ToLower(schema)+".") {
 				return schema
 			}
 		}
@@ -553,6 +558,16 @@ func extractTenantFromQuery(query string, d *Detector) string {
 		tid := extractTenantIDFromSQL(query, d.TenantColumn)
 		if tid != "unknown" {
 			return tid
+		}
+	}
+	// Last resort: try regex for any schema-qualified table reference
+	allMatches := schemaQualAllRe.FindAllStringSubmatch(query, -1)
+	for _, m := range allMatches {
+		if len(m) >= 2 {
+			schema := strings.ToLower(m[1])
+			if schema != "public" && schema != "pg_catalog" && schema != "information_schema" && schema != "pg_toast" {
+				return m[1]
+			}
 		}
 	}
 	return "unknown"
