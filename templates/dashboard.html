@@ -409,6 +409,102 @@
     .drawer-inner { grid-template-columns: 1fr; }
   }
 
+  /* ── Cost Panel ── */
+  .cost-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0;
+  }
+  .cost-item {
+    padding: 14px 16px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .cost-item:last-child { border-right: none; }
+  .cost-tenant {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--orange);
+    margin-bottom: 4px;
+  }
+  .cost-amount {
+    font-size: 22px;
+    font-weight: bold;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .cost-pct {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .cost-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .cost-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #38a169, #f6821f, #e53e3e);
+    transition: width 0.5s ease;
+  }
+
+  /* ── Anomaly / Prediction Cards ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  .anomaly-item, .prediction-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .anomaly-item:last-child, .prediction-item:last-child { border-bottom: none; }
+  .anomaly-icon { font-size: 18px; flex-shrink: 0; }
+  .anomaly-body { flex: 1; }
+  .anomaly-msg { font-size: 12px; font-weight: bold; color: var(--text); }
+  .anomaly-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .severity-critical { color: #fc8181; }
+  .severity-warning { color: var(--yellow); }
+  .severity-info { color: var(--muted); }
+
+  .prediction-trend { font-size: 18px; flex-shrink: 0; }
+  .prediction-body { flex: 1; }
+  .prediction-msg { font-size: 12px; color: var(--text); }
+  .prediction-detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .trend-rising { color: #e53e3e; }
+  .trend-stable { color: #38a169; }
+  .trend-falling { color: #4299e1; }
+
+  /* ── Throttle Status ── */
+  .throttle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0;
+  }
+  .throttle-item {
+    padding: 12px 16px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .throttle-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .throttle-dot.active { background: #e53e3e; animation: pulse 1s infinite; }
+  .throttle-dot.clear { background: #38a169; }
+  .throttle-info { flex: 1; }
+  .throttle-tenant { font-size: 12px; font-weight: bold; color: var(--text); }
+  .throttle-detail { font-size: 11px; color: var(--muted); }
+
   /* Footer */
   footer {
     text-align: center;
@@ -541,13 +637,61 @@
     </div>
   </div>
 
+  <!-- Cost Attribution -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">💰 Cost per Tenant</span>
+      <span class="card-subtitle">Estimated monthly cost allocation based on query time</span>
+    </div>
+    <div class="cost-grid" id="cost-grid">
+      <div class="empty">Loading cost data…</div>
+    </div>
+  </div>
+
+  <!-- Anomalies + Predictions (side by side) -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🔥 Active Anomalies</span>
+        <span class="card-subtitle" id="anomaly-count">—</span>
+      </div>
+      <div id="anomaly-list">
+        <div class="empty">Building baselines… anomalies appear after ~2 minutes</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🔮 Predictions</span>
+        <span class="card-subtitle">Trend analysis &amp; breach forecasts</span>
+      </div>
+      <div id="prediction-list">
+        <div class="empty">Collecting data for predictions…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Throttle Status -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🛡️ Throttle Status</span>
+      <span class="card-subtitle" id="throttle-status">Monitoring</span>
+    </div>
+    <div class="throttle-grid" id="throttle-grid">
+      <div class="empty">No active throttling</div>
+    </div>
+  </div>
+
 </main>
 
 <footer>
   SchemaGhost 👻 · Multi-tenant PostgreSQL observability ·
-  <a href="/api/health" target="_blank">/api/health</a> ·
-  <a href="/api/config" target="_blank">/api/config</a> ·
-  <a href="/api/alerts" target="_blank">/api/alerts</a>
+  <a href="/api/health" target="_blank">/health</a> ·
+  <a href="/api/anomalies" target="_blank">/anomalies</a> ·
+  <a href="/api/predictions" target="_blank">/predictions</a> ·
+  <a href="/api/costs" target="_blank">/costs</a> ·
+  <a href="/api/throttle/status" target="_blank">/throttle</a> ·
+  <a href="/api/agents/status" target="_blank">/agents</a>
 </footer>
 
 <script>
@@ -915,6 +1059,122 @@ function setStatus(ok, msg) {
 // ── Alert polling (every 5s, independent of main refresh) ─────────────
 setInterval(refreshAlerts, 5000);
 
+// ── Render Cost Panel ───────────────────────────────────────────────
+async function refreshCosts() {
+  try {
+    const costs = await fetchJSON('/api/costs');
+    const grid = document.getElementById('cost-grid');
+    if (!costs || costs.length === 0) {
+      grid.innerHTML = '<div class="empty">No cost data yet</div>';
+      return;
+    }
+    // Sort by cost descending
+    costs.sort((a, b) => (b.monthly_cost || 0) - (a.monthly_cost || 0));
+    const maxCost = Math.max(1, ...costs.map(c => c.monthly_cost || 0));
+    grid.innerHTML = costs.map(c => {
+      const pct = maxCost > 0 ? ((c.monthly_cost || 0) / maxCost * 100) : 0;
+      const prop = ((c.query_time_proportion || 0) * 100).toFixed(1);
+      return `<div class="cost-item">
+        <div class="cost-tenant">${escHtml(c.tenant_id)}</div>
+        <div class="cost-amount">$${(c.monthly_cost || 0).toFixed(0)}<span style="font-size:12px;color:var(--muted)">/mo</span></div>
+        <div class="cost-pct">${prop}% of total query time</div>
+        <div class="cost-bar"><div class="cost-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  } catch(e) { /* costs optional */ }
+}
+
+// ── Render Anomalies ────────────────────────────────────────────────
+async function refreshAnomalies() {
+  try {
+    const data = await fetchJSON('/api/anomalies');
+    const list = document.getElementById('anomaly-list');
+    const countEl = document.getElementById('anomaly-count');
+    const active = data.active || [];
+    countEl.textContent = active.length > 0 ? active.length + ' active' : 'None detected';
+    if (active.length === 0) {
+      list.innerHTML = '<div class="empty">No anomalies — all tenants within normal range</div>';
+      return;
+    }
+    list.innerHTML = active.map(a => {
+      const icon = a.severity === 'critical' ? '🔴' : a.severity === 'warning' ? '🟡' : '🔵';
+      const cls = 'severity-' + (a.severity || 'info');
+      return `<div class="anomaly-item">
+        <span class="anomaly-icon">${icon}</span>
+        <div class="anomaly-body">
+          <div class="anomaly-msg ${cls}">${escHtml(a.message || a.tenant_id)}</div>
+          <div class="anomaly-meta">Tenant: ${escHtml(a.tenant_id)} · Severity: ${a.severity} · z-score: ${(a.z_score || 0).toFixed(1)} · ${a.fired_at ? timeAgo(a.fired_at) : ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('anomaly-list').innerHTML = '<div class="empty">Anomaly endpoint unavailable</div>';
+  }
+}
+
+// ── Render Predictions ──────────────────────────────────────────────
+async function refreshPredictions() {
+  try {
+    const data = await fetchJSON('/api/predictions');
+    const list = document.getElementById('prediction-list');
+    const preds = data.predictions || data || [];
+    if (!Array.isArray(preds) || preds.length === 0) {
+      list.innerHTML = '<div class="empty">Collecting data for trend analysis…</div>';
+      return;
+    }
+    list.innerHTML = preds.map(p => {
+      const trend = (p.trend || '').toLowerCase();
+      let icon = '➡️';
+      let cls = 'trend-stable';
+      if (trend === 'rising' || trend === 'critical_rising') { icon = '📈'; cls = 'trend-rising'; }
+      else if (trend === 'falling') { icon = '📉'; cls = 'trend-falling'; }
+      const breach = p.predicted_breach_in_sec;
+      const breachText = breach && breach > 0
+        ? `⚠️ Breach in ~${Math.ceil(breach/60)} min`
+        : 'Within limits';
+      return `<div class="prediction-item">
+        <span class="prediction-trend ${cls}">${icon}</span>
+        <div class="prediction-body">
+          <div class="prediction-msg"><strong>${escHtml(p.tenant_id)}</strong> — ${escHtml(p.trend || 'stable')}</div>
+          <div class="prediction-detail">${breachText} · Projected: ${fmtMs(p.projected_value)} · R²: ${(p.r_squared || 0).toFixed(2)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('prediction-list').innerHTML = '<div class="empty">Prediction endpoint unavailable</div>';
+  }
+}
+
+// ── Render Throttle Status ──────────────────────────────────────────
+async function refreshThrottle() {
+  try {
+    const data = await fetchJSON('/api/throttle/status');
+    const grid = document.getElementById('throttle-grid');
+    const statusEl = document.getElementById('throttle-status');
+    const tenants = data.tenants || data || [];
+    if (!Array.isArray(tenants) || tenants.length === 0) {
+      const enabled = data.enabled !== undefined ? data.enabled : false;
+      statusEl.textContent = enabled ? 'Enabled — no active throttles' : 'Disabled';
+      grid.innerHTML = `<div class="empty">${enabled ? 'All tenants within limits' : 'Throttling is disabled (set THROTTLE_ENABLED=true)'}</div>`;
+      return;
+    }
+    const activeCount = tenants.filter(t => t.throttled).length;
+    statusEl.textContent = activeCount > 0 ? activeCount + ' tenants throttled' : 'All clear';
+    grid.innerHTML = tenants.map(t => {
+      const isThrottled = t.throttled || false;
+      return `<div class="throttle-item">
+        <span class="throttle-dot ${isThrottled ? 'active' : 'clear'}"></span>
+        <div class="throttle-info">
+          <div class="throttle-tenant">${escHtml(t.tenant_id)}</div>
+          <div class="throttle-detail">${isThrottled ? '⛔ THROTTLED — ' + (t.reason || 'resource limit') : '✅ Normal'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('throttle-grid').innerHTML = '<div class="empty">Throttle endpoint unavailable</div>';
+  }
+}
+
 // ── Main refresh loop ──────────────────────────────────────────────────
 let countdown = 5;
 async function refresh() {
@@ -930,6 +1190,12 @@ async function refresh() {
     renderOverview(health.overview || {});
     renderTenants(tenants);
     renderQueries(queries);
+
+    // Refresh new panels
+    refreshCosts();
+    refreshAnomalies();
+    refreshPredictions();
+    refreshThrottle();
 
     if (health.pattern) {
       document.getElementById('pattern-text').textContent = health.pattern;
