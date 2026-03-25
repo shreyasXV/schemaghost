@@ -376,16 +376,35 @@ func executeQuery(db *sql.DB, schema string, tmpl struct {
 		query = tmpl.sql
 	}
 
-	// Add realistic delay via pg_sleep
-	if tmpl.delayMs > 0 {
-		// Add some variance to the delay
-		actualDelay := float64(tmpl.delayMs) * (0.5 + rand.Float64())
-		sleepSec := actualDelay / 1000.0
-		query = fmt.Sprintf("SELECT pg_sleep(%f), (%s) as r", sleepSec, query)
+	// Execute the query directly — no pg_sleep wrapper
+	// pg_sleep hides queries from pg_stat_statements tracking
+
+	// Count how many $N params the query expects
+	paramCount := countParams(query)
+	args := make([]interface{}, paramCount)
+	for i := range args {
+		if i%2 == 0 {
+			args[i] = rand.Intn(100) + 1
+		} else {
+			args[i] = fmt.Sprintf("user_%d@test.com", rand.Intn(100))
+		}
 	}
 
 	var result interface{}
-	_ = db.QueryRow(query, rand.Intn(100)+1, fmt.Sprintf("user_%d@test.com", rand.Intn(100))).Scan(&result)
+	_ = db.QueryRow(query, args...).Scan(&result)
+}
+
+func countParams(s string) int {
+	max := 0
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '$' && s[i+1] >= '1' && s[i+1] <= '9' {
+			n := int(s[i+1] - '0')
+			if n > max {
+				max = n
+			}
+		}
+	}
+	return max
 }
 
 func countPercent(s string) int {
