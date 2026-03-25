@@ -27,10 +27,26 @@ var (
 func main() {
 	// Check for --mcp flag
 	mcpMode := false
+	tunerMode := false
 	for _, arg := range os.Args[1:] {
 		if arg == "--mcp" {
 			mcpMode = true
 		}
+		if arg == "--tune" {
+			tunerMode = true
+		}
+	}
+
+	// Tuner mode — run autoresearch optimization, no DB needed
+	if tunerMode {
+		result := RunTuner(100, 50, 0.3)
+		outPath := "tuner_results/latest.json"
+		os.MkdirAll("tuner_results", 0755)
+		if err := SaveTunerResult(result, outPath); err != nil {
+			log.Fatalf("Error saving: %v", err)
+		}
+		fmt.Printf("  Results saved to: %s\n", outPath)
+		return
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
