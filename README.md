@@ -1,71 +1,104 @@
 <p align="center">
+  <img src="logo-v3.svg.png" alt="FaultWall" width="80">
   <h1 align="center">FaultWall</h1>
-  <p align="center"><strong>Tenant-aware intelligence layer for multi-tenant PostgreSQL</strong></p>
+  <p align="center"><strong>See which tenant is killing your database — then auto-throttle them.</strong></p>
+  <p align="center">Tenant-aware observability + autonomous control for multi-tenant PostgreSQL.</p>
 </p>
 
 <p align="center">
   <a href="https://goreportcard.com/report/github.com/shreyasXV/faultwall"><img src="https://goreportcard.com/badge/github.com/shreyasXV/faultwall" alt="Go Report Card"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://ghcr.io/shreyasxv/faultwall"><img src="https://img.shields.io/badge/docker-ghcr.io-blue.svg" alt="Docker"></a>
+  <img src="https://img.shields.io/badge/go-1.21+-00ADD8.svg" alt="Go 1.21+">
+  <img src="https://img.shields.io/badge/postgres-14+-336791.svg" alt="PostgreSQL 14+">
 </p>
 
 ---
 
-## The Problem
+**Your database doesn't know which customer is killing it.** PostgreSQL sees queries, not tenants. When one customer runs a monster analytics export and your P99 spikes to 12 seconds for everyone — Datadog tells you the database is slow. FaultWall tells you *who's making it slow*, what it's costing you, and can stop them automatically.
 
-- **Databases don't know tenants.** PostgreSQL sees connections and queries — not which customer is behind them. When your database is on fire, you're blind to *who* caused it.
-- **Datadog can't answer WHO.** APM tools show you slow queries and high CPU, but they can't tell you which tenant is consuming 80% of your resources while paying 5% of the bill.
-- **AI agents are tenant-blind.** As AI-driven workloads hit your database, you need per-tenant observability to understand, attribute, and control resource consumption in real time.
+```bash
+# One binary. One env var. Done.
+DATABASE_URL=postgres://user:pass@host:5432/db ./faultwall
+# → http://localhost:8080
+```
 
-FaultWall fixes all three. One binary, zero config, instant tenant-level visibility.
+---
+
+## What it does
+
+🔍 **Detects** — Auto-identifies your tenant isolation pattern (schema-per-tenant, row-level, database-per-tenant) and starts tracking per-tenant metrics immediately.
+
+📊 **Monitors** — Real-time dashboard showing tenant leaderboard, top slow queries, cost attribution, anomaly alerts, and breach predictions. Auto-refreshes every 5 seconds.
+
+🧠 **Learns** — Statistical anomaly detection builds per-tenant baselines. No LLM needed — z-score analysis flags when a tenant deviates from their normal behavior.
+
+🔮 **Predicts** — Linear regression on metric trends: "acme_corp will breach the query time threshold in ~4 minutes." Gives you time to act before the outage.
+
+⚡ **Throttles** — Auto-kills runaway queries, enforces per-tenant connection limits. Configurable grace periods and escalation (cancel → terminate).
+
+💰 **Attributes cost** — "Tenant acme_corp is responsible for 74% of your database work and costs $338/mo of your $360 RDS bill." Finance teams love this.
+
+🤖 **AI-native** — MCP server (10 tools) + agent REST API. AI agents can query tenant health, detect noisy neighbors, and throttle them — no human in the loop.
 
 ---
 
 ## Quick Start
 
+### Option 1: Binary
+
+```bash
+git clone https://github.com/shreyasXV/faultwall && cd faultwall
+go build -o faultwall .
+DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" ./faultwall
+```
+
+### Option 2: Docker
+
 ```bash
 docker run -e DATABASE_URL=postgres://user:pass@host:5432/dbname -p 8080:8080 ghcr.io/shreyasxv/faultwall:latest
 ```
 
-Open [http://localhost:8080](http://localhost:8080) — that's it.
+### Option 3: Docker Compose (with demo data)
+
+```bash
+git clone https://github.com/shreyasXV/faultwall && cd faultwall
+docker compose up
+```
+
+Starts PostgreSQL with demo tenant schemas + FaultWall on [localhost:8080](http://localhost:8080).
+
+> **Requires `pg_stat_statements`** — see [setup](#enabling-pg_stat_statements) below.
 
 ---
 
-## Features
+## Dashboard
 
-- **Auto-Detection** — Automatically identifies schema-per-tenant, row-level isolation, or single-tenant patterns
-- **Tenant Leaderboard** — Real-time rankings by queries, latency (P50/P95/P99), connections, I/O, and cache hit ratio
-- **Auto-Throttling** — Kill or cancel runaway queries per tenant, enforce per-tenant connection limits
-- **Cost Attribution** — Proportionally attribute RDS/database costs to each tenant based on query time
-- **Threshold Alerts** — Configurable rules for latency, connections, cache hit, and I/O with Slack notifications
-- **Slack Integration** — Color-coded alert notifications with rate limiting (5min cooldown)
-- **Historical Trends** — In-memory time-series with sparklines and CSV/JSON export
-- **AI Anomaly Detection** — Statistical learning builds per-tenant baselines and detects deviations using z-score analysis (no LLM required)
-- **Predictive Throttling** — Linear regression on metric trends predicts when tenants will breach thresholds, with minutes-ahead warnings
-- **Slow Query Explorer** — Top queries with tenant attribution and fingerprinting
-- **Zero Dependencies** — Single Go binary, no frameworks, no build steps. Just `lib/pq`.
-- **Dark Dashboard** — Mobile-responsive, auto-refreshing UI with no external JS dependencies
+The dashboard shows 6 panels, all auto-refreshing:
 
----
-
-## For AI Agents
-
-> **FaultWall is AI-native.** It exposes an MCP server and agent-optimized REST API so that AI agents (Claude, GPT, Cursor, custom copilots) can query tenant health, identify noisy neighbors, attribute costs, and throttle runaway tenants — all programmatically, in real time.
+| Panel | What you see |
+|-------|-------------|
+| **Resource Overview** | Connections, QPS, cache hit ratio, DB size |
+| **Tenant Leaderboard** | Ranked by queries, latency, rows, connections — click to expand |
+| **Top Slow Queries** | Worst queries with tenant attribution |
+| **💰 Cost per Tenant** | Monthly cost estimate with proportion bars |
+| **🔥 Active Anomalies** | Severity badges, z-scores, timestamps |
+| **🔮 Predictions** | Trend arrows, breach forecasts, R² confidence |
+| **🛡️ Throttle Status** | Per-tenant throttle indicators |
 
 ---
 
-## MCP Integration (Model Context Protocol)
+## For AI Agents (MCP)
 
-AI agents connect via MCP to query tenant health over JSON-RPC 2.0 (stdio transport).
+FaultWall is **AI-native**. It exposes an [MCP server](https://modelcontextprotocol.io) so AI agents can monitor and control your database autonomously.
 
 ### Setup
 
-Add to your `claude_desktop_config.json` (or equivalent MCP client config):
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "cordon": {
+    "faultwall": {
       "command": "./faultwall",
       "args": ["--mcp"],
       "env": {
@@ -76,220 +109,260 @@ Add to your `claude_desktop_config.json` (or equivalent MCP client config):
 }
 ```
 
-### Available MCP Tools
+### 10 MCP Tools
 
 | Tool | Description |
-|---|---|
-| `list_tenants` | All tenants with current metrics and cost |
-| `get_tenant` | Detailed metrics for one tenant |
-| `get_noisy_tenants` | Tenants above avg query time threshold |
-| `get_costs` | Cost attribution for all tenants |
+|------|-------------|
+| `list_tenants` | All tenants with metrics and cost |
+| `get_tenant` | Deep-dive on one tenant |
+| `get_noisy_tenants` | Tenants above latency threshold |
+| `get_costs` | Cost attribution breakdown |
 | `get_tenant_cost` | Cost for a specific tenant |
-| `throttle_tenant` | Cancel or terminate a tenant's active queries |
-| `get_health` | Overall DB health (connections, cache hit, QPS, alerts) |
-| `get_throttle_events` | Recent throttle events |
-| `get_anomalies` | Active anomalies detected by statistical learning |
-| `get_predictions` | Active predictions of threshold breaches |
+| `throttle_tenant` | Cancel or terminate a tenant's queries |
+| `get_health` | Overall DB health |
+| `get_throttle_events` | Recent throttle actions |
+| `get_anomalies` | Active anomalies (z-score) |
+| `get_predictions` | Trend predictions + breach forecasts |
 
-### Example (Claude Desktop)
+### Example
 
-> "Which tenants are noisy right now?"
-
-Claude calls `get_noisy_tenants` and returns a summary like:
-> "acme_corp has avg query time 234ms (45% of resources). Recommend throttling."
-
----
-
-## Agent-Native REST API
-
-Higher-level endpoints designed for AI agents. Every response includes a `summary` field with plain-English descriptions.
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/agents/status` | GET | One-call overview: healthy, noisy tenants, alerts, throttle events |
-| `/api/agents/noisy` | GET | Noisy tenants with actionable context |
-| `/api/agents/tenant/{id}` | GET | Tenant detail with plain-english summary |
-| `/api/agents/tenant/{id}` | POST | Throttle a tenant (`{"action": "cancel"}`) |
-| `/api/agents/costs` | GET | Simplified cost view |
-| `/api/agents/recommendation` | GET | Suggested actions based on current state |
-| `/api/agents/anomalies` | GET | Active anomalies with plain-english summaries |
-| `/api/agents/predictions` | GET | Predicted threshold breaches with summaries |
+> **You:** "Which tenants are noisy right now?"  
+> **Claude** calls `get_noisy_tenants` →  
+> **Claude:** "acme_corp has avg query time 234ms and is using 74% of resources ($338/mo). Recommend throttling."
 
 ---
 
-## Architecture
+## Agent REST API
 
-```mermaid
-graph LR
-    App["Your Application"] --> PG["PostgreSQL"]
-    SG["FaultWall"] --> PG
-    SG --> Dashboard["Dashboard :8080"]
-    SG --> Alerts["Slack / Webhooks"]
-    SG --> API["REST API"]
-    SG --> Throttle["Auto-Throttler"]
-    SG --> Cost["Cost Attribution"]
-```
+Higher-level endpoints with `summary` fields — designed for LLMs, not just JSON parsers.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/agents/status` | One-call overview: health, noisy tenants, alerts |
+| `GET /api/agents/noisy` | Noisy tenants with context |
+| `GET /api/agents/tenant/{id}` | Tenant detail with plain-English summary |
+| `POST /api/agents/tenant/{id}` | Throttle a tenant |
+| `GET /api/agents/recommendation` | AI-generated suggested actions |
+| `GET /api/agents/anomalies` | Active anomalies with summaries |
+| `GET /api/agents/predictions` | Predicted breaches with summaries |
+
+---
+
+## How it works
 
 ```
-faultwall/
-├── main.go          # HTTP server, startup, background loop, --mcp flag
-├── mcp.go           # MCP server (JSON-RPC 2.0 over stdio)
-├── agent_api.go     # Agent-native REST API with plain-english summaries
-├── collector.go     # Metrics collection from pg_stat_* views
-├── detector.go      # Tenant isolation pattern auto-detection
-├── dashboard.go     # HTTP handlers + HTML dashboard
-├── alerting.go      # Threshold alerting engine
-├── throttle.go      # Auto-throttling (cancel/terminate runaway queries)
-├── anomaly.go       # AI anomaly detection (statistical learning)
-├── predictor.go     # Predictive throttling (trend analysis)
-├── cost.go          # Per-tenant cost attribution
-├── slack.go         # Slack webhook notifications
-├── history.go       # In-memory time-series + export
-├── mcp_config.json  # Example MCP client configuration
-└── templates/
-    └── dashboard.html
+┌─────────────────┐         ┌──────────────┐
+│ Your Application │────────▶│  PostgreSQL   │
+└─────────────────┘         └──────┬───────┘
+                                   │
+                            ┌──────┴───────┐
+                            │  FaultWall    │  ← polls pg_stat_statements
+                            │  (sidecar)    │     every 10 seconds
+                            └──┬──┬──┬──┬──┘
+                               │  │  │  │
+              ┌────────────────┘  │  │  └────────────────┐
+              ▼                   ▼  ▼                   ▼
+        ┌──────────┐     ┌──────────┐  ┌──────────┐  ┌──────────┐
+        │Dashboard │     │ Anomaly  │  │Throttler │  │MCP Server│
+        │ :8080    │     │ Detector │  │          │  │ (AI)     │
+        └──────────┘     └──────────┘  └──────────┘  └──────────┘
 ```
+
+FaultWall is a **sidecar** — it connects to your database as a read-only client, polls `pg_stat_statements` and `pg_stat_activity`, and builds a tenant-aware view. It never modifies your data. Throttling uses `pg_cancel_backend()` / `pg_terminate_backend()` on runaway queries only.
+
+### Tenant detection
+
+FaultWall automatically detects how your app isolates tenants:
+
+| Pattern | How it detects | Accuracy |
+|---------|---------------|----------|
+| **Schema-per-tenant** | Queries contain `schema.table` | ⭐⭐⭐ Best |
+| **Row-level isolation** | `WHERE tenant_id = X` in queries | ⭐⭐ Good |
+| **Database-per-tenant** | Separate databases per tenant | ⭐⭐ Good |
+
+No config needed. Point it at your database and it figures it out.
 
 ---
 
 ## Configuration
 
 | Env Var | Default | Description |
-|---|---|---|
+|---------|---------|-------------|
 | `DATABASE_URL` | **(required)** | PostgreSQL connection string |
 | `PORT` | `8080` | HTTP server port |
-| `SLACK_WEBHOOK_URL` | — | Slack incoming webhook for notifications |
-| `ALERT_WEBHOOK_URL` | — | Generic webhook URL for alert JSON payloads |
-| `HISTORY_RETENTION` | `24h` | In-memory time-series retention (Go duration) |
-| `THROTTLE_ENABLED` | `false` | Enable auto-throttling of runaway queries |
-| `THROTTLE_MAX_QUERY_TIME_MS` | `30000` | Kill queries running longer than this (ms) |
-| `THROTTLE_MAX_CONNECTIONS_PER_TENANT` | `50` | Max active connections per tenant |
-| `THROTTLE_ACTION` | `cancel` | `cancel` (pg_cancel_backend) or `terminate` (pg_terminate_backend) |
-| `THROTTLE_GRACE_PERIOD_MS` | `5000` | Wait time before escalating cancel to terminate |
-| `RDS_HOURLY_COST` | `0.50` | Hourly database cost in USD for cost attribution |
-| `ANOMALY_WINDOW_SIZE` | `30` | Rolling window size for anomaly baselines (number of collection cycles) |
-| `ANOMALY_SENSITIVITY` | `2.0` | Z-score threshold for anomaly detection (standard deviations) |
-| `PREDICT_THRESHOLD_MS` | `30000` | Query time threshold for predictive alerts (ms) |
+| `SLACK_WEBHOOK_URL` | — | Slack webhook for alerts |
+| `THROTTLE_ENABLED` | `false` | Enable auto-throttling |
+| `THROTTLE_MAX_QUERY_TIME_MS` | `30000` | Kill queries longer than this |
+| `THROTTLE_MAX_CONNECTIONS_PER_TENANT` | `50` | Max connections per tenant |
+| `THROTTLE_ACTION` | `cancel` | `cancel` or `terminate` |
+| `THROTTLE_GRACE_PERIOD_MS` | `5000` | Grace period before escalation |
+| `RDS_HOURLY_COST` | `0.50` | Hourly DB cost for attribution |
+| `ANOMALY_SENSITIVITY` | `2.0` | Z-score threshold (std deviations) |
+| `PREDICT_THRESHOLD_MS` | `30000` | Prediction breach threshold |
+| `HISTORY_RETENTION` | `24h` | Time-series retention |
 
 ---
 
-## API Reference
+## Full API Reference
 
-### Core
+<details>
+<summary><strong>Core APIs</strong></summary>
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /` | GET | Dashboard HTML |
-| `GET /api/tenants` | GET | Tenant leaderboard (JSON) |
-| `GET /api/queries` | GET | Top slow queries (JSON) |
-| `GET /api/health` | GET | Health check + overview stats |
-| `GET /api/config` | GET | Detected isolation pattern |
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Dashboard |
+| `GET /api/tenants` | Tenant leaderboard |
+| `GET /api/queries` | Top slow queries |
+| `GET /api/health` | Health check + overview |
+| `GET /api/config` | Detected isolation pattern |
 
-### Alerts
+</details>
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /api/alerts` | GET | Active alerts |
-| `GET /api/alerts/history` | GET | Alert history (last 100) |
-| `GET /api/alerts/rules` | GET | List alert rules |
-| `POST /api/alerts/rules` | POST | Add alert rule |
-| `DELETE /api/alerts/rules?id=X` | DELETE | Remove alert rule |
+<details>
+<summary><strong>Alerts</strong></summary>
 
-### Throttle
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/alerts` | Active alerts |
+| `GET /api/alerts/history` | Alert history |
+| `GET /api/alerts/rules` | List rules |
+| `POST /api/alerts/rules` | Add rule |
+| `DELETE /api/alerts/rules?id=X` | Remove rule |
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /api/throttle/status` | GET | Throttle status, config, recent events |
-| `GET /api/throttle/config` | GET | Current throttle config |
-| `POST /api/throttle/config` | POST | Update throttle config at runtime |
+</details>
 
-### Cost Attribution
+<details>
+<summary><strong>Throttle</strong></summary>
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /api/costs` | GET | Cost breakdown for all tenants |
-| `GET /api/costs?tenant=X` | GET | Cost for a specific tenant |
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/throttle/status` | Status + config + events |
+| `GET /api/throttle/config` | Current config |
+| `POST /api/throttle/config` | Update config |
 
-### History & Export
+</details>
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /api/history?tenant=X&metric=p99_ms&period=1h` | GET | Tenant metric time-series |
-| `GET /api/history/overview?period=1h` | GET | Overview time-series |
-| `GET /api/export/csv` | GET | Export metrics as CSV |
-| `GET /api/export/json` | GET | Export full snapshot as JSON |
+<details>
+<summary><strong>Cost Attribution</strong></summary>
 
-### Anomaly Detection & Predictions
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/costs` | All tenants |
+| `GET /api/costs?tenant=X` | Specific tenant |
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `GET /api/anomalies` | GET | Active anomalies, recent history, and baseline summaries |
-| `GET /api/anomalies/baseline?tenant=X` | GET | Full baseline data for one tenant |
-| `GET /api/predictions` | GET | Active threshold breach predictions |
-| `GET /api/predictions?tenant=X` | GET | Predictions for a specific tenant |
+</details>
+
+<details>
+<summary><strong>Anomaly Detection & Predictions</strong></summary>
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/anomalies` | Active anomalies + baselines |
+| `GET /api/anomalies/baseline?tenant=X` | Full baseline for tenant |
+| `GET /api/predictions` | Breach predictions |
+| `GET /api/predictions?tenant=X` | Predictions for tenant |
+
+</details>
+
+<details>
+<summary><strong>History & Export</strong></summary>
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/history?tenant=X&metric=p99_ms&period=1h` | Time-series |
+| `GET /api/history/overview?period=1h` | Overview time-series |
+| `GET /api/export/csv` | CSV export |
+| `GET /api/export/json` | JSON snapshot |
+
+</details>
 
 ---
 
 ## Enabling pg_stat_statements
 
-FaultWall uses `pg_stat_statements` for per-query metrics. Without it, you still get connection and I/O metrics.
-
 ```sql
 -- Add to postgresql.conf:
 -- shared_preload_libraries = 'pg_stat_statements'
--- Then restart PostgreSQL and run:
+-- Restart PostgreSQL, then:
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 ```
 
-**AWS RDS / Aurora:** Enable via parameter group, then reboot.
-**Supabase, Neon, etc.:** Usually already enabled — just run `CREATE EXTENSION`.
+**AWS RDS/Aurora:** Enable via parameter group → reboot.  
+**Supabase/Neon:** Usually pre-enabled — just `CREATE EXTENSION`.
+
+Without it, FaultWall still works (connection + I/O metrics) but per-query data won't be available.
 
 ---
 
-## Dev Setup
+## Self-Tuning (AutoResearch)
+
+FaultWall can optimize its own detection parameters using a genetic algorithm:
 
 ```bash
-git clone https://github.com/shreyasXV/faultwall
-cd faultwall
-docker compose up
+DATABASE_URL=... ./faultwall --tune
 ```
 
-This starts PostgreSQL with demo tenant schemas pre-seeded, plus FaultWall on port 8080.
+This runs 100 generations of parameter optimization against your workload, finding the sensitivity and window settings that maximize detection rate while minimizing false positives. No LLM needed — pure statistics.
 
 ---
 
-## AI-Powered Observability
+## Architecture
 
-FaultWall uses **statistical learning** (not LLMs) for genuine AI-powered analysis:
+```
+faultwall/
+├── main.go          # Server, startup, --mcp flag, --tune flag
+├── mcp.go           # MCP server (JSON-RPC 2.0 stdio)
+├── agent_api.go     # Agent REST API with summaries
+├── collector.go     # pg_stat_* metrics collection
+├── detector.go      # Tenant pattern auto-detection
+├── anomaly.go       # Statistical anomaly detection
+├── predictor.go     # Linear regression predictions
+├── throttle.go      # Auto-throttling engine
+├── cost.go          # Cost-per-tenant attribution
+├── alerting.go      # Threshold alerting
+├── slack.go         # Slack notifications
+├── history.go       # Time-series + export
+├── dashboard.go     # HTTP handlers
+├── tuner.go         # AutoResearch genetic optimizer
+└── templates/
+    └── dashboard.html
+```
 
-- **Anomaly Detection** — Maintains per-tenant rolling baselines for avg query time, query count, connections, and rows read. Uses z-score analysis to detect deviations beyond configurable sensitivity (default: 2 standard deviations). Automatically resolves anomalies when metrics return to normal for 3 consecutive cycles.
+Single binary. Zero external dependencies beyond `lib/pq`. ~5,000 lines of Go.
 
-- **Predictive Throttling** — Applies linear regression to metric trends to project when a tenant will breach thresholds. Reports trend direction (accelerating/linear/decelerating), confidence (R-squared), and estimated minutes until breach. Predictions auto-expire after 10 minutes or when trends reverse.
-
-Both systems feed into the agent recommendation engine and send Slack notifications for critical events.
+---
 
 ## Roadmap
 
-- **eBPF Integration** — Kernel-level query tracing for zero-overhead observability
+- [ ] eBPF kernel-level per-query CPU/IO attribution
+- [ ] SQL proxy mode (intercept queries in-flight)
+- [ ] Query plan regression detection
+- [ ] MySQL support
+- [ ] Kubernetes operator
+- [ ] Grafana plugin
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Contributions welcome! Open an issue or submit a PR.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+```bash
+git clone https://github.com/shreyasXV/faultwall
+cd faultwall
+go build -o faultwall .
+DATABASE_URL=... ./faultwall
+```
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
 
 ---
 
-Built by [Shreyas Shubham](https://github.com/shreyasXV).
+<p align="center">
+  <strong>Built by <a href="https://github.com/shreyasXV">Shreyas Shubham</a></strong><br>
+  <a href="https://twitter.com/FaultWall">@FaultWall</a>
+</p>

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "cordon": {
+    "faultwall": {
       "command": "./faultwall",
       "args": ["--mcp"],
       "env": {
