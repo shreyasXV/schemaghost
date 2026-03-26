@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" fill="none">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6C5CE7"/>
+      <stop offset="100%" style="stop-color:#4834D4"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- FAULT - with a diagonal crack/offset through it -->
+  <text x="40" y="140" font-family="Inter, SF Pro Display, -apple-system, Helvetica Neue, sans-serif" font-weight="700" font-size="120" fill="#E8E8F0" letter-spacing="-2">FAULT</text>
+  
+  <!-- The crack line cutting through FAULT -->
+  <line x1="270" y1="30" x2="240" y2="170" stroke="#6C5CE7" stroke-width="3" opacity="0.8"/>
+  <line x1="272" y1="30" x2="242" y2="170" stroke="#A29BFE" stroke-width="1" opacity="0.5"/>
+  
+  <!-- WALL - solid, no crack, representing the defense -->
+  <text x="370" y="140" font-family="Inter, SF Pro Display, -apple-system, Helvetica Neue, sans-serif" font-weight="800" font-size="120" fill="url(#grad)" letter-spacing="-2">WALL</text>
+  
+  <!-- Subtle shield icon before the text -->
+  <path d="M20 70L10 75v15c0 12 4.5 23 10.5 25.5 6-2.5 10.5-13.5 10.5-25.5V75L20 70z" fill="none" stroke="#6C5CE7" stroke-width="2"/>
+  <line x1="20" y1="78" x2="17" y2="105" stroke="#6C5CE7" stroke-width="1.5" opacity="0.6"/>
+</svg>

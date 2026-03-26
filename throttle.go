@@ -256,7 +256,7 @@ func (t *Throttler) notifySlack(e ThrottleEvent) {
 	if t.slack == nil {
 		return
 	}
-	title := fmt.Sprintf("[SchemaGhost] Throttle: %s on tenant '%s'", e.Action, e.TenantID)
+	title := fmt.Sprintf("[FaultWall] Throttle: %s on tenant '%s'", e.Action, e.TenantID)
 	text := fmt.Sprintf("PID: `%d` | Duration: `%.0fms` | Action: `%s`\nQuery: `%s`",
 		e.PID, e.QueryDuration, e.Action, e.Query)
 	color := "#e53e3e" // red

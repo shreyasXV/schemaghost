@@ -1,12 +1,12 @@
 <p align="center">
-  <h1 align="center">SchemaGhost</h1>
+  <h1 align="center">FaultWall</h1>
   <p align="center"><strong>Tenant-aware intelligence layer for multi-tenant PostgreSQL</strong></p>
 </p>
 
 <p align="center">
-  <a href="https://goreportcard.com/report/github.com/shreyasXV/schemaghost"><img src="https://goreportcard.com/badge/github.com/shreyasXV/schemaghost" alt="Go Report Card"></a>
+  <a href="https://goreportcard.com/report/github.com/shreyasXV/faultwall"><img src="https://goreportcard.com/badge/github.com/shreyasXV/faultwall" alt="Go Report Card"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://ghcr.io/shreyasxv/schemaghost"><img src="https://img.shields.io/badge/docker-ghcr.io-blue.svg" alt="Docker"></a>
+  <a href="https://ghcr.io/shreyasxv/faultwall"><img src="https://img.shields.io/badge/docker-ghcr.io-blue.svg" alt="Docker"></a>
 </p>
 
 ---
@@ -17,14 +17,14 @@
 - **Datadog can't answer WHO.** APM tools show you slow queries and high CPU, but they can't tell you which tenant is consuming 80% of your resources while paying 5% of the bill.
 - **AI agents are tenant-blind.** As AI-driven workloads hit your database, you need per-tenant observability to understand, attribute, and control resource consumption in real time.
 
-SchemaGhost fixes all three. One binary, zero config, instant tenant-level visibility.
+FaultWall fixes all three. One binary, zero config, instant tenant-level visibility.
 
 ---
 
 ## Quick Start
 
 ```bash
-docker run -e DATABASE_URL=postgres://user:pass@host:5432/dbname -p 8080:8080 ghcr.io/shreyasxv/schemaghost:latest
+docker run -e DATABASE_URL=postgres://user:pass@host:5432/dbname -p 8080:8080 ghcr.io/shreyasxv/faultwall:latest
 ```
 
 Open [http://localhost:8080](http://localhost:8080) — that's it.
@@ -50,7 +50,7 @@ Open [http://localhost:8080](http://localhost:8080) — that's it.
 
 ## For AI Agents
 
-> **SchemaGhost is AI-native.** It exposes an MCP server and agent-optimized REST API so that AI agents (Claude, GPT, Cursor, custom copilots) can query tenant health, identify noisy neighbors, attribute costs, and throttle runaway tenants — all programmatically, in real time.
+> **FaultWall is AI-native.** It exposes an MCP server and agent-optimized REST API so that AI agents (Claude, GPT, Cursor, custom copilots) can query tenant health, identify noisy neighbors, attribute costs, and throttle runaway tenants — all programmatically, in real time.
 
 ---
 
@@ -66,7 +66,7 @@ Add to your `claude_desktop_config.json` (or equivalent MCP client config):
 {
   "mcpServers": {
     "cordon": {
-      "command": "./schemaghost",
+      "command": "./faultwall",
       "args": ["--mcp"],
       "env": {
         "DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"
@@ -122,7 +122,7 @@ Higher-level endpoints designed for AI agents. Every response includes a `summar
 ```mermaid
 graph LR
     App["Your Application"] --> PG["PostgreSQL"]
-    SG["SchemaGhost"] --> PG
+    SG["FaultWall"] --> PG
     SG --> Dashboard["Dashboard :8080"]
     SG --> Alerts["Slack / Webhooks"]
     SG --> API["REST API"]
@@ -131,7 +131,7 @@ graph LR
 ```
 
 ```
-schemaghost/
+faultwall/
 ├── main.go          # HTTP server, startup, background loop, --mcp flag
 ├── mcp.go           # MCP server (JSON-RPC 2.0 over stdio)
 ├── agent_api.go     # Agent-native REST API with plain-english summaries
@@ -232,7 +232,7 @@ schemaghost/
 
 ## Enabling pg_stat_statements
 
-SchemaGhost uses `pg_stat_statements` for per-query metrics. Without it, you still get connection and I/O metrics.
+FaultWall uses `pg_stat_statements` for per-query metrics. Without it, you still get connection and I/O metrics.
 
 ```sql
 -- Add to postgresql.conf:
@@ -249,18 +249,18 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 ## Dev Setup
 
 ```bash
-git clone https://github.com/shreyasXV/schemaghost
-cd schemaghost
+git clone https://github.com/shreyasXV/faultwall
+cd faultwall
 docker compose up
 ```
 
-This starts PostgreSQL with demo tenant schemas pre-seeded, plus SchemaGhost on port 8080.
+This starts PostgreSQL with demo tenant schemas pre-seeded, plus FaultWall on port 8080.
 
 ---
 
 ## AI-Powered Observability
 
-SchemaGhost uses **statistical learning** (not LLMs) for genuine AI-powered analysis:
+FaultWall uses **statistical learning** (not LLMs) for genuine AI-powered analysis:
 
 - **Anomaly Detection** — Maintains per-tenant rolling baselines for avg query time, query count, connections, and rows read. Uses z-score analysis to detect deviations beyond configurable sensitivity (default: 2 standard deviations). Automatically resolves anomalies when metrics return to normal for 3 consecutive cycles.
 

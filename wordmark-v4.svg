@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 120" fill="none">
+  <!-- Icon mark - compact -->
+  <rect x="10" y="15" width="14" height="40" rx="3" fill="#7C5CFC"/>
+  <rect x="7" y="63" width="14" height="40" rx="3" fill="#7C5CFC" opacity="0.5"/>
+  <rect x="34" y="8" width="14" height="96" rx="3" fill="#7C5CFC"/>
+  <rect x="58" y="15" width="14" height="40" rx="3" fill="#7C5CFC"/>
+  <rect x="58" y="63" width="14" height="40" rx="3" fill="#7C5CFC"/>
+  
+  <!-- Wordmark - no space between fault and wall -->
+  <text x="95" y="82" font-family="Inter, -apple-system, Helvetica Neue, sans-serif" font-weight="600" font-size="64" fill="#F0F0F8" letter-spacing="-1.5">fault<tspan font-weight="800" fill="#7C5CFC">wall</tspan></text>
+</svg>

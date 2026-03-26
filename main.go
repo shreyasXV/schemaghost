@@ -92,7 +92,7 @@ To enable it, run as a superuser:
 And add to postgresql.conf:
   shared_preload_libraries = 'pg_stat_statements'
 
-Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-level metrics.`)
+Then restart PostgreSQL. FaultWall will run in degraded mode without query-level metrics.`)
 	} else {
 		log.Println("✅ pg_stat_statements extension detected")
 	}
@@ -215,7 +215,7 @@ Then restart PostgreSQL. SchemaGhost will run in degraded mode without query-lev
 	mux.HandleFunc("/api/export/csv", handleExportCSV)
 	mux.HandleFunc("/api/export/json", handleExportJSON)
 
-	log.Printf("🚀 SchemaGhost running on http://0.0.0.0:%s", port)
+	log.Printf("🚀 FaultWall running on http://0.0.0.0:%s", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

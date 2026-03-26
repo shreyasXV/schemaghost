@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Shield shape - the "wall" -->
+  <path d="M256 28L48 120v152c0 118.7 88.8 229.5 208 252 119.2-22.5 208-133.3 208-252V120L256 28z" fill="#1a1a2e" stroke="#e94560" stroke-width="12"/>
+  
+  <!-- Fault line / lightning crack through the shield -->
+  <path d="M256 100l-30 80h40l-50 100h20l-40 120 100-140h-45l55-90h-40l40-70z" fill="#e94560" opacity="0.9"/>
+  
+  <!-- Inner glow on the crack -->
+  <path d="M256 100l-30 80h40l-50 100h20l-40 120 100-140h-45l55-90h-40l40-70z" fill="#ff6b6b" opacity="0.4" filter="blur(3px)"/>
+  
+  <!-- Small circuit/data nodes along the shield -->
+  <circle cx="140" cy="200" r="6" fill="#e94560"/>
+  <circle cx="372" cy="200" r="6" fill="#e94560"/>
+  <circle cx="160" cy="320" r="6" fill="#e94560"/>
+  <circle cx="352" cy="320" r="6" fill="#e94560"/>
+  <circle cx="256" cy="420" r="6" fill="#e94560"/>
+  
+  <!-- Connection lines from nodes -->
+  <line x1="140" y1="200" x2="160" y2="320" stroke="#e94560" stroke-width="1.5" opacity="0.4"/>
+  <line x1="372" y1="200" x2="352" y2="320" stroke="#e94560" stroke-width="1.5" opacity="0.4"/>
+  <line x1="160" y1="320" x2="256" y2="420" stroke="#e94560" stroke-width="1.5" opacity="0.4"/>
+  <line x1="352" y1="320" x2="256" y2="420" stroke="#e94560" stroke-width="1.5" opacity="0.4"/>
+</svg>

@@ -272,7 +272,7 @@ func (ad *AnomalyDetector) notifySlack(a Anomaly) {
 	if ad.slack == nil {
 		return
 	}
-	title := fmt.Sprintf("[SchemaGhost] Anomaly %s: %s", a.Severity, a.TenantID)
+	title := fmt.Sprintf("[FaultWall] Anomaly %s: %s", a.Severity, a.TenantID)
 	text := fmt.Sprintf("Metric: `%s` | Value: `%s` | Baseline: `%.2f` | Z-Score: `%.1f`\n%s",
 		a.Metric, fmt.Sprintf("%.2f", a.CurrentValue), a.BaselineMean, a.ZScore, a.Message)
 	color := "#f5c542" // yellow for warning

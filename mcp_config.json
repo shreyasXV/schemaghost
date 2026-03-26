@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "cordon": {
-      "command": "./schemaghost",
+      "command": "./faultwall",
       "args": ["--mcp"],
       "env": {
         "DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"

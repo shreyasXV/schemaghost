@@ -12,7 +12,7 @@ COPY *.go ./
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s" \
-    -o schemaghost .
+    -o faultwall .
 
 # ──────────────────────────────────────────
 FROM alpine:3.19
@@ -23,7 +23,7 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 
 # Copy binary and templates
-COPY --from=builder /build/schemaghost /app/schemaghost
+COPY --from=builder /build/faultwall /app/faultwall
 COPY templates/ /app/templates/
 
 # Non-root user
@@ -34,4 +34,4 @@ EXPOSE 8080
 
 ENV PORT=8080
 
-ENTRYPOINT ["/app/schemaghost"]
+ENTRYPOINT ["/app/faultwall"]

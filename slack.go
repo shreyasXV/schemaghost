@@ -56,7 +56,7 @@ func (s *SlackNotifier) SendAlert(a *Alert) {
 		levelStr = "INFO"
 	}
 
-	title := fmt.Sprintf("[SchemaGhost 👻] %s %s: %s", icon, levelStr, a.Message)
+	title := fmt.Sprintf("[FaultWall 👻] %s %s: %s", icon, levelStr, a.Message)
 	text := fmt.Sprintf("Metric: `%s` | Value: `%.2f` | Threshold: `%.2f` | Tenant: `%s`",
 		a.Metric, a.Value, a.Threshold, a.TenantID)
 
@@ -69,7 +69,7 @@ func (s *SlackNotifier) SendResolved(a *Alert) {
 	if s == nil {
 		return
 	}
-	title := fmt.Sprintf("[SchemaGhost 👻] ✅ RESOLVED: %s", a.Message)
+	title := fmt.Sprintf("[FaultWall 👻] ✅ RESOLVED: %s", a.Message)
 	text := fmt.Sprintf("Alert resolved for tenant `%s`. Metric `%s` is back within threshold.", a.TenantID, a.Metric)
 	payload := slackPayload(title, text, "#38a169")
 	s.send(payload)
@@ -84,7 +84,7 @@ func slackPayload(title, text, color string) map[string]interface{} {
 				"title":    title,
 				"text":     text,
 				"ts":       time.Now().Unix(),
-				"footer":   "SchemaGhost 👻",
+				"footer":   "FaultWall 👻",
 			},
 		},
 	}

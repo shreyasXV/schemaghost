@@ -206,7 +206,7 @@ func handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	data := collector.GetData()
 
 	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"schemaghost-export-"+
+	w.Header().Set("Content-Disposition", "attachment; filename=\"faultwall-export-"+
 		time.Now().Format("20060102-150405")+".csv\"")
 
 	var sb strings.Builder
@@ -234,7 +234,7 @@ func handleExportCSV(w http.ResponseWriter, r *http.Request) {
 func handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	data := collector.GetData()
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"schemaghost-export-"+
+	w.Header().Set("Content-Disposition", "attachment; filename=\"faultwall-export-"+
 		time.Now().Format("20060102-150405")+".json\"")
 	writeJSON(w, data)
 }

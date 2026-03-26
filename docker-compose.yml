@@ -4,7 +4,7 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: schemaghost_demo
+      POSTGRES_DB: faultwall_demo
       POSTGRES_USER: ghost
       POSTGRES_PASSWORD: ghostpass
     volumes:
@@ -18,17 +18,17 @@ services:
         -c pg_stat_statements.track=all
         -c pg_stat_statements.max=10000
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ghost -d schemaghost_demo"]
+      test: ["CMD-SHELL", "pg_isready -U ghost -d faultwall_demo"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  schemaghost:
+  faultwall:
     build: .
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://ghost:ghostpass@postgres:5432/schemaghost_demo?sslmode=disable
+      DATABASE_URL: postgres://ghost:ghostpass@postgres:5432/faultwall_demo?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy

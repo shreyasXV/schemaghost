@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Two vertical bars (database/tenants) with a diagonal fault line between them that's being blocked -->
+  
+  <!-- Left bar - the "fault" side, slightly offset/broken -->
+  <rect x="120" y="80" width="60" height="160" rx="8" fill="#7C5CFC"/>
+  <rect x="110" y="270" width="60" height="160" rx="8" fill="#7C5CFC" opacity="0.5"/>
+  
+  <!-- The wall - center solid bar -->
+  <rect x="226" y="56" width="60" height="400" rx="8" fill="#7C5CFC"/>
+  
+  <!-- Right bar - the "protected" side, perfectly aligned -->
+  <rect x="332" y="80" width="60" height="160" rx="8" fill="#7C5CFC"/>
+  <rect x="332" y="270" width="60" height="160" rx="8" fill="#7C5CFC"/>
+</svg>

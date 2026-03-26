@@ -1,4 +1,4 @@
-module github.com/shreyasXV/schemaghost
+module github.com/shreyasXV/faultwall
 
 go 1.21
 
