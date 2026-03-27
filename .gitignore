@@ -1,3 +1,24 @@
+# Binary
 faultwall
-ROADMAP.md
+*.exe
+
+# Build artifacts
+demo-frames/
 tuner_results/
+
+# Config with secrets
+mcp_config.json
+
+# OS files
+.DS_Store
+*.swp
+
+# Old logo variants (keep only assets/)
+logo*.svg
+logo*.png
+icon*.svg
+icon*.png
+banner*.svg
+wordmark*.svg
+wordmark*.png
+.github/workflows/
