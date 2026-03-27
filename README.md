@@ -1,8 +1,8 @@
 <p align="center">
   <img src="logo-v3.svg.png" alt="FaultWall" width="80">
   <h1 align="center">FaultWall</h1>
-  <p align="center"><strong>See which tenant is killing your database — then auto-throttle them.</strong></p>
-  <p align="center">Tenant-aware observability + autonomous control for multi-tenant PostgreSQL.</p>
+  <p align="center"><strong>Autonomous Database SRE — detects anomalies, kills runaway queries, attributes costs.</strong></p>
+  <p align="center">eBPF-powered query detection and auto-throttling for PostgreSQL. One binary. Open source.</p>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 
 ---
 
-**Your database doesn't know which customer is killing it.** PostgreSQL sees queries, not tenants. When one customer runs a monster analytics export and your P99 spikes to 12 seconds for everyone — Datadog tells you the database is slow. FaultWall tells you *who's making it slow*, what it's costing you, and can stop them automatically.
+**Your database is running a query that's about to take everyone down.** A bad JOIN, a missing index, an AI agent that just fired a full table scan. By the time you get paged, P99 is at 12 seconds and customers are churning. FaultWall detects it, kills the query, and tells you exactly which tenant caused it — autonomously, in real time.
 
 ```bash
 # One binary. One env var. Done.
