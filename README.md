@@ -74,30 +74,101 @@ agents:
 
 ---
 
-## Quick Start
+## Quick Start (5 minutes)
 
-### Option 1: Binary
+### Step 1: Install
 
 ```bash
 git clone https://github.com/shreyasXV/faultwall && cd faultwall
 go build -o faultwall .
-DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" ./faultwall
 ```
 
-### Option 2: Docker
+Or use Docker:
+```bash
+docker pull ghcr.io/shreyasxv/faultwall:latest
+```
+
+### Step 2: Write your policy
+
+Create `policies.yaml` — this is where you define what each agent is allowed to do:
+
+```yaml
+# Default: block any agent not explicitly listed
+default_policy: deny
+
+agents:
+  cursor-ai:
+    description: "Cursor IDE agent"
+    # Never allow these operations from this agent
+    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, GRANT]
+    # Never allow access to these tables
+    blocked_tables: [public.users, public.payments]
+    # Per-mission permissions
+    missions:
+      summarize-feedback:
+        tables: [public.feedback, public.products]
+        max_rows: 1000
+        max_query_time_ms: 5000
+      update-shipping:
+        tables: [public.orders]
+        conditions: ["UPDATE must include WHERE clause"]
+
+  langchain-agent:
+    description: "LangChain research agent"
+    blocked_operations: [DROP, TRUNCATE, ALTER, GRANT]
+    missions:
+      analyze-trends:
+        tables: [public.orders, public.products]
+        max_rows: 5000
+
+# What to do with connections that don't identify as an agent
+unidentified:
+  policy: monitor    # monitor | deny | allow
+```
+
+### Step 3: Run FaultWall
 
 ```bash
-docker run -e DATABASE_URL=postgres://user:pass@host:5432/dbname -p 8080:8080 ghcr.io/shreyasxv/faultwall:latest
+DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" \
+POLICY_FILE=./policies.yaml \
+POLICY_ENFORCEMENT=enforce \
+./faultwall
 ```
 
-### Option 3: Docker Compose (with demo data)
+FaultWall starts on [http://localhost:8080](http://localhost:8080) with the dashboard, API, and policy enforcement.
+
+### Step 4: Configure your agents
+
+In your agent code, set the identity before running queries:
+
+```sql
+SET application_name = 'agent:cursor-ai:mission:summarize-feedback';
+```
+
+For Python (psycopg2):
+```python
+conn = psycopg2.connect(dsn, application_name="agent:cursor-ai:mission:summarize-feedback")
+```
+
+For Node.js (pg):
+```javascript
+const client = new Client({ connectionString: dsn, application_name: "agent:cursor-ai:mission:summarize-feedback" });
+```
+
+That's it. FaultWall now enforces your policies in real-time. Any agent that tries to access a table or run an operation outside its mission scope gets its connection terminated.
+
+### Step 5: Verify it works
 
 ```bash
-git clone https://github.com/shreyasXV/faultwall && cd faultwall
-docker compose up
-```
+# Check loaded policies
+curl http://localhost:8080/api/policies
 
-Starts PostgreSQL with demo tenant schemas + FaultWall on [localhost:8080](http://localhost:8080).
+# See connected agents
+curl http://localhost:8080/api/firewall/agents
+
+# View violations (blocked queries)
+curl http://localhost:8080/api/violations
+```
 
 > **Requires `pg_stat_statements`** — see [setup](#enabling-pg_stat_statements) below.
 
