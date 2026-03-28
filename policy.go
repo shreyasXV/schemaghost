@@ -1,0 +1,479 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// PolicyConfig is the top-level policies.yaml structure
+type PolicyConfig struct {
+	DefaultPolicy string                 `yaml:"default_policy" json:"default_policy"`
+	Agents        map[string]AgentPolicy `yaml:"agents" json:"agents"`
+	Unidentified  UnidentifiedPolicy     `yaml:"unidentified" json:"unidentified"`
+}
+
+// AgentPolicy defines rules for a specific agent
+type AgentPolicy struct {
+	Description       string                    `yaml:"description" json:"description"`
+	Missions          map[string]MissionPolicy  `yaml:"missions" json:"missions"`
+	BlockedOperations []string                  `yaml:"blocked_operations" json:"blocked_operations"`
+	BlockedTables     []string                  `yaml:"blocked_tables" json:"blocked_tables"`
+}
+
+// MissionPolicy defines per-mission table/operation access
+type MissionPolicy struct {
+	Tables         []string `yaml:"tables" json:"tables"`
+	MaxRows        int      `yaml:"max_rows" json:"max_rows"`
+	MaxQueryTimeMs int      `yaml:"max_query_time_ms" json:"max_query_time_ms"`
+	Conditions     []string `yaml:"conditions" json:"conditions"`
+}
+
+// UnidentifiedPolicy handles connections without agent: prefix
+type UnidentifiedPolicy struct {
+	Policy string `yaml:"policy" json:"policy"` // monitor | deny | allow
+}
+
+// PolicyViolation records a policy breach
+type PolicyViolation struct {
+	AgentID   string    `json:"agent_id"`
+	MissionID string    `json:"mission_id"`
+	Query     string    `json:"query"`
+	Reason    string    `json:"reason"`
+	Table     string    `json:"table"`
+	Operation string    `json:"operation"`
+	PID       int       `json:"pid"`
+	Action    string    `json:"action"` // "blocked" or "monitored"
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// PolicyEngine manages policy loading, enforcement, and violation tracking
+type PolicyEngine struct {
+	mu          sync.RWMutex
+	config      *PolicyConfig
+	violations  []PolicyViolation
+	enforcement string // "enforce" | "monitor"
+	filePath    string
+}
+
+func NewPolicyEngine() *PolicyEngine {
+	filePath := os.Getenv("POLICY_FILE")
+	if filePath == "" {
+		filePath = "./policies.yaml"
+	}
+	enforcement := os.Getenv("POLICY_ENFORCEMENT")
+	if enforcement == "" {
+		enforcement = "monitor"
+	}
+
+	pe := &PolicyEngine{
+		enforcement: enforcement,
+		filePath:    filePath,
+	}
+
+	if err := pe.LoadFromFile(filePath); err != nil {
+		log.Printf("Policy engine: no policies loaded (%v) — running without policy enforcement", err)
+		pe.config = &PolicyConfig{
+			DefaultPolicy: "allow",
+			Agents:        make(map[string]AgentPolicy),
+			Unidentified:  UnidentifiedPolicy{Policy: "allow"},
+		}
+	}
+
+	return pe
+}
+
+// LoadFromFile reads and parses a policies.yaml file
+func (pe *PolicyEngine) LoadFromFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading policy file: %w", err)
+	}
+
+	var cfg PolicyConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parsing policy YAML: %w", err)
+	}
+
+	if cfg.Agents == nil {
+		cfg.Agents = make(map[string]AgentPolicy)
+	}
+
+	pe.mu.Lock()
+	pe.config = &cfg
+	pe.mu.Unlock()
+
+	log.Printf("Policy engine: loaded %d agent policies from %s (default: %s)", len(cfg.Agents), path, cfg.DefaultPolicy)
+	return nil
+}
+
+// Reload hot-reloads the policy file
+func (pe *PolicyEngine) Reload() error {
+	return pe.LoadFromFile(pe.filePath)
+}
+
+// GetConfig returns the current policy config
+func (pe *PolicyEngine) GetConfig() *PolicyConfig {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	return pe.config
+}
+
+// GetViolations returns all recorded violations
+func (pe *PolicyEngine) GetViolations() []PolicyViolation {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	result := make([]PolicyViolation, len(pe.violations))
+	copy(result, pe.violations)
+	return result
+}
+
+// GetViolationsByAgent returns violations for a specific agent
+func (pe *PolicyEngine) GetViolationsByAgent(agentID string) []PolicyViolation {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	var result []PolicyViolation
+	for _, v := range pe.violations {
+		if v.AgentID == agentID {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func (pe *PolicyEngine) addViolation(v PolicyViolation) {
+	pe.mu.Lock()
+	pe.violations = append(pe.violations, v)
+	// Keep last 1000 violations
+	if len(pe.violations) > 1000 {
+		pe.violations = pe.violations[len(pe.violations)-1000:]
+	}
+	pe.mu.Unlock()
+}
+
+// CheckQuery evaluates a query against the loaded policies.
+// Returns nil if allowed, a PolicyViolation if blocked/flagged.
+func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid int) *PolicyViolation {
+	pe.mu.RLock()
+	cfg := pe.config
+	pe.mu.RUnlock()
+
+	if cfg == nil {
+		return nil
+	}
+
+	operation := ExtractSQLOperation(query)
+	tables := ExtractTables(query)
+	log.Printf("Policy check: agent=%s mission=%s op=%s tables=%v", identity.AgentID, identity.MissionID, operation, tables)
+
+	// Unidentified connection
+	if identity == nil {
+		if cfg.Unidentified.Policy == "deny" {
+			v := PolicyViolation{
+				AgentID:   "unidentified",
+				Query:     truncateQuery(query),
+				Reason:    "unidentified_connection",
+				Operation: operation,
+				PID:       pid,
+				Timestamp: time.Now(),
+			}
+			return &v
+		}
+		if cfg.Unidentified.Policy == "monitor" {
+			v := PolicyViolation{
+				AgentID:   "unidentified",
+				Query:     truncateQuery(query),
+				Reason:    "unidentified_connection_monitored",
+				Operation: operation,
+				PID:       pid,
+				Action:    "monitored",
+				Timestamp: time.Now(),
+			}
+			return &v
+		}
+		return nil
+	}
+
+	agentPolicy, agentExists := cfg.Agents[identity.AgentID]
+
+	// Agent not in policy
+	if !agentExists {
+		if cfg.DefaultPolicy == "deny" {
+			return &PolicyViolation{
+				AgentID:   identity.AgentID,
+				MissionID: identity.MissionID,
+				Query:     truncateQuery(query),
+				Reason:    "agent_not_in_policy",
+				Operation: operation,
+				PID:       pid,
+				Timestamp: time.Now(),
+			}
+		}
+		return nil
+	}
+
+	// Check blocked operations (global for agent)
+	for _, blocked := range agentPolicy.BlockedOperations {
+		if strings.EqualFold(operation, blocked) {
+			return &PolicyViolation{
+				AgentID:   identity.AgentID,
+				MissionID: identity.MissionID,
+				Query:     truncateQuery(query),
+				Reason:    "blocked_operation",
+				Operation: operation,
+				PID:       pid,
+				Timestamp: time.Now(),
+			}
+		}
+	}
+
+	// Check blocked tables (global for agent)
+	for _, table := range tables {
+		if isTableBlocked(table, agentPolicy.BlockedTables) {
+			return &PolicyViolation{
+				AgentID:   identity.AgentID,
+				MissionID: identity.MissionID,
+				Query:     truncateQuery(query),
+				Reason:    "blocked_table",
+				Table:     table,
+				Operation: operation,
+				PID:       pid,
+				Timestamp: time.Now(),
+			}
+		}
+	}
+
+	// Check mission policy
+	if identity.MissionID != "" {
+		missionPolicy, missionExists := agentPolicy.Missions[identity.MissionID]
+		if !missionExists {
+			if cfg.DefaultPolicy == "deny" {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "no_mission_policy",
+					Operation: operation,
+					PID:       pid,
+					Timestamp: time.Now(),
+				}
+			}
+			return nil
+		}
+
+		// Check tables against mission allowed list
+		if len(missionPolicy.Tables) > 0 {
+			for _, table := range tables {
+				if !isTableAllowed(table, missionPolicy.Tables) {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "table_not_in_mission",
+						Table:     table,
+						Operation: operation,
+						PID:       pid,
+						Timestamp: time.Now(),
+					}
+				}
+			}
+		}
+
+		// Check "UPDATE must include WHERE clause" condition
+		for _, cond := range missionPolicy.Conditions {
+			if strings.Contains(strings.ToLower(cond), "update must include where") {
+				if strings.EqualFold(operation, "UPDATE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "condition_violated",
+						Operation: operation,
+						PID:       pid,
+						Timestamp: time.Now(),
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// EnforceOnConnection checks a live agent connection and takes action if violated
+func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *PolicyViolation {
+	if conn.Query == "" || conn.State != "active" {
+		return nil
+	}
+
+	// Skip internal/system queries
+	if isSystemQuery(conn.Query) {
+		return nil
+	}
+
+	violation := pe.CheckQuery(conn.Identity, conn.Query, conn.PID)
+	if violation == nil {
+		return nil
+	}
+
+	// Set action based on enforcement mode
+	if pe.enforcement == "enforce" {
+		violation.Action = "blocked"
+		// Terminate the backend
+		_, err := db.Exec("SELECT pg_terminate_backend($1)", conn.PID)
+		if err != nil {
+			log.Printf("Policy enforcement: failed to terminate pid %d: %v", conn.PID, err)
+		} else {
+			log.Printf("Policy enforcement: terminated pid %d (agent=%s, reason=%s)", conn.PID, violation.AgentID, violation.Reason)
+		}
+	} else {
+		violation.Action = "monitored"
+		log.Printf("Policy monitor: violation detected pid %d (agent=%s, reason=%s, query=%s)", conn.PID, violation.AgentID, violation.Reason, violation.Query)
+	}
+
+	pe.addViolation(*violation)
+	return violation
+}
+
+// ── SQL Parsing (regex-based for v1) ──
+
+// ExtractSQLOperation returns the SQL operation type (SELECT, INSERT, etc.)
+func ExtractSQLOperation(query string) string {
+	normalized := strings.TrimSpace(query)
+	// Strip leading comments
+	for strings.HasPrefix(normalized, "/*") {
+		idx := strings.Index(normalized, "*/")
+		if idx < 0 {
+			break
+		}
+		normalized = strings.TrimSpace(normalized[idx+2:])
+	}
+	// Skip SET statements (e.g., SET application_name = ...; SELECT ...)
+	upper := strings.ToUpper(normalized)
+	if strings.HasPrefix(upper, "SET ") {
+		// Find the next statement after semicolon
+		idx := strings.Index(normalized, ";")
+		if idx >= 0 && idx+1 < len(normalized) {
+			normalized = strings.TrimSpace(normalized[idx+1:])
+			upper = strings.ToUpper(normalized)
+		}
+	}
+
+	for _, op := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT"} {
+		if strings.HasPrefix(upper, op) {
+			return op
+		}
+	}
+	return "UNKNOWN"
+}
+
+var tableExtractRe = regexp.MustCompile(`(?i)\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z_][a-zA-Z0-9_.]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_.]*)*)`)
+
+// ExtractTables extracts table names from a SQL query
+func ExtractTables(query string) []string {
+	matches := tableExtractRe.FindAllStringSubmatch(query, -1)
+	seen := make(map[string]bool)
+	var tables []string
+
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		// Split on commas for "FROM t1, t2" syntax
+		parts := strings.Split(m[1], ",")
+		for _, part := range parts {
+			tbl := strings.TrimSpace(part)
+			// Strip alias (take first word only)
+			fields := strings.Fields(tbl)
+			if len(fields) > 0 {
+				tbl = fields[0]
+			}
+			tbl = strings.ToLower(tbl)
+			// Skip known non-tables
+			if tbl == "" || tbl == "set" || tbl == "values" || tbl == "(" {
+				continue
+			}
+			if !seen[tbl] {
+				seen[tbl] = true
+				tables = append(tables, tbl)
+			}
+		}
+	}
+	return tables
+}
+
+// ── Helpers ──
+
+func isTableBlocked(table string, blockedList []string) bool {
+	tableLower := strings.ToLower(table)
+	for _, blocked := range blockedList {
+		blockedLower := strings.ToLower(blocked)
+		if strings.HasSuffix(blockedLower, ".*") {
+			// Wildcard: "pg_catalog.*" matches any pg_catalog.xxx
+			prefix := strings.TrimSuffix(blockedLower, "*")
+			if strings.HasPrefix(tableLower, prefix) {
+				return true
+			}
+		} else if tableLower == blockedLower {
+			return true
+		}
+	}
+	return false
+}
+
+func isTableAllowed(table string, allowedList []string) bool {
+	tableLower := strings.ToLower(table)
+	for _, allowed := range allowedList {
+		// Mission tables use format "schema.table: [ops]" or just "schema.table"
+		allowedClean := strings.Split(allowed, ":")[0]
+		allowedClean = strings.TrimSpace(strings.ToLower(allowedClean))
+		if tableLower == allowedClean {
+			return true
+		}
+		// Also match without schema prefix
+		if !strings.Contains(tableLower, ".") && strings.HasSuffix(allowedClean, "."+tableLower) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSystemQuery(query string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(query))
+	// For multi-statement queries (SET ...; SELECT ...), check the non-SET part
+	if strings.HasPrefix(upper, "SET ") && strings.Contains(upper, ";") {
+		idx := strings.Index(upper, ";")
+		rest := strings.TrimSpace(upper[idx+1:])
+		if rest != "" {
+			return false // Has a real query after SET
+		}
+	}
+	systemPrefixes := []string{
+		"SET ", "SHOW ", "BEGIN", "COMMIT", "ROLLBACK",
+		"LISTEN", "NOTIFY", "DISCARD", "RESET", "DEALLOCATE",
+	}
+	for _, prefix := range systemPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	// Skip pg_stat queries (our own polling)
+	if strings.Contains(upper, "PG_STAT_") || strings.Contains(upper, "PG_DATABASE_SIZE") {
+		return true
+	}
+	return false
+}
+
+func truncateQuery(q string) string {
+	if len(q) > 200 {
+		return q[:200] + "..."
+	}
+	return q
+}

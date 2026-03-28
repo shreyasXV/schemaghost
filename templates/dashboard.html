@@ -505,6 +505,87 @@
   .throttle-tenant { font-size: 12px; font-weight: bold; color: var(--text); }
   .throttle-detail { font-size: 11px; color: var(--muted); }
 
+  /* ── Violations Panel ── */
+  .violation-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .violation-item:last-child { border-bottom: none; }
+  .violation-icon { font-size: 18px; flex-shrink: 0; }
+  .violation-body { flex: 1; min-width: 0; }
+  .violation-msg { font-size: 12px; font-weight: bold; color: #fc8181; }
+  .violation-query {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #a0aec0;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 600px;
+  }
+  .violation-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .violation-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+  }
+  .violation-badge.blocked {
+    background: rgba(229,62,62,0.2);
+    color: #fc8181;
+    border: 1px solid rgba(229,62,62,0.4);
+  }
+  .violation-badge.monitored {
+    background: rgba(245,197,66,0.2);
+    color: var(--yellow);
+    border: 1px solid rgba(245,197,66,0.4);
+  }
+  .agent-bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 16px;
+    height: 120px;
+  }
+  .agent-bar-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    min-width: 40px;
+  }
+  .agent-bar {
+    width: 100%;
+    max-width: 40px;
+    background: linear-gradient(180deg, #e53e3e, #f6821f);
+    border-radius: 3px 3px 0 0;
+    transition: height 0.5s ease;
+  }
+  .agent-bar-label {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60px;
+    text-align: center;
+  }
+  .agent-bar-count {
+    font-size: 10px;
+    color: var(--orange);
+    font-weight: bold;
+    margin-bottom: 2px;
+  }
+
   /* Footer */
   footer {
     text-align: center;
@@ -682,6 +763,54 @@
     </div>
   </div>
 
+  <!-- Policy Violations -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🚨 Policy Violations</span>
+        <span class="card-subtitle" id="violation-count">—</span>
+      </div>
+      <div id="violation-list">
+        <div class="empty">No policy violations detected</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📊 Violations per Agent</span>
+        <span class="card-subtitle">Bar chart</span>
+      </div>
+      <div id="violation-chart">
+        <div class="empty">No violation data</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connected Agents -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🤖 Connected Agents</span>
+      <span class="card-subtitle" id="agent-conn-count">—</span>
+    </div>
+    <div class="table-wrap">
+      <table id="agent-conn-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Mission</th>
+            <th>PID</th>
+            <th>State</th>
+            <th>Query</th>
+            <th>User</th>
+          </tr>
+        </thead>
+        <tbody id="agent-conn-tbody">
+          <tr><td colspan="6" class="empty">No agent connections detected</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </main>
 
 <footer>
@@ -691,7 +820,10 @@
   <a href="/api/predictions" target="_blank">/predictions</a> ·
   <a href="/api/costs" target="_blank">/costs</a> ·
   <a href="/api/throttle/status" target="_blank">/throttle</a> ·
-  <a href="/api/agents/status" target="_blank">/agents</a>
+  <a href="/api/agents/status" target="_blank">/agents</a> ·
+  <a href="/api/violations" target="_blank">/violations</a> ·
+  <a href="/api/policies" target="_blank">/policies</a> ·
+  <a href="/api/firewall/agents" target="_blank">/firewall</a>
 </footer>
 
 <script>
@@ -1175,6 +1307,102 @@ async function refreshThrottle() {
   }
 }
 
+// ── Render Violations ──────────────────────────────────────────────────
+async function refreshViolations() {
+  try {
+    const data = await fetchJSON('/api/violations');
+    const list = document.getElementById('violation-list');
+    const countEl = document.getElementById('violation-count');
+    const violations = data.violations || [];
+    countEl.textContent = violations.length > 0 ? violations.length + ' total' : 'None';
+
+    if (violations.length === 0) {
+      list.innerHTML = '<div class="empty">No policy violations detected</div>';
+    } else {
+      const shown = violations.slice(0, 20);
+      list.innerHTML = shown.map(v => {
+        const icon = v.action === 'blocked' ? '🔴' : '🟡';
+        const badgeCls = v.action === 'blocked' ? 'blocked' : 'monitored';
+        const badgeText = v.action === 'blocked' ? 'BLOCKED' : 'MONITORED';
+        const reason = (v.reason || '').replace(/_/g, ' ');
+        const ts = v.timestamp ? timeAgo(v.timestamp) : '';
+        return `<div class="violation-item">
+          <span class="violation-icon">${icon}</span>
+          <div class="violation-body">
+            <div class="violation-msg">
+              <span class="violation-badge ${badgeCls}">${badgeText}</span>
+              Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id ? ' / ' + escHtml(v.mission_id) : ''} &mdash; ${escHtml(reason)}
+              ${v.table ? ' (table: ' + escHtml(v.table) + ')' : ''}
+              ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
+            </div>
+            <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
+            <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // Build per-agent chart
+    renderViolationChart(violations);
+  } catch(e) {
+    document.getElementById('violation-list').innerHTML = '<div class="empty">Violations endpoint unavailable</div>';
+  }
+}
+
+function renderViolationChart(violations) {
+  const chart = document.getElementById('violation-chart');
+  if (!violations || violations.length === 0) {
+    chart.innerHTML = '<div class="empty">No violation data</div>';
+    return;
+  }
+
+  const counts = {};
+  violations.forEach(v => {
+    const key = v.agent_id || 'unknown';
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxCount = Math.max(1, ...entries.map(e => e[1]));
+
+  chart.innerHTML = '<div class="agent-bar-chart">' + entries.map(([agent, count]) => {
+    const heightPct = (count / maxCount) * 80;
+    return `<div class="agent-bar-col">
+      <span class="agent-bar-count">${count}</span>
+      <div class="agent-bar" style="height:${heightPct}px"></div>
+      <span class="agent-bar-label" title="${escHtml(agent)}">${escHtml(agent)}</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+// ── Render Connected Agents ────────────────────────────────────────────
+async function refreshAgentConnections() {
+  try {
+    const data = await fetchJSON('/api/firewall/agents');
+    const tbody = document.getElementById('agent-conn-tbody');
+    const countEl = document.getElementById('agent-conn-count');
+    const agents = data.agents || [];
+    countEl.textContent = agents.length > 0 ? agents.length + ' connected' : 'None';
+
+    if (agents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No agent connections detected</td></tr>';
+      return;
+    }
+    tbody.innerHTML = agents.map(a => {
+      return `<tr>
+        <td><span class="tenant-id">${escHtml(a.agent_id || '—')}</span></td>
+        <td>${escHtml(a.mission_id || '—')}</td>
+        <td>${a.pid}</td>
+        <td>${escHtml(a.state || '—')}</td>
+        <td><span class="query-text" title="${escHtml(a.query)}">${escHtml((a.query || '').slice(0, 80))}${(a.query || '').length > 80 ? '...' : ''}</span></td>
+        <td>${escHtml(a.username || '—')}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('agent-conn-tbody').innerHTML = '<tr><td colspan="6" class="empty">Agent endpoint unavailable</td></tr>';
+  }
+}
+
 // ── Main refresh loop ──────────────────────────────────────────────────
 let countdown = 5;
 async function refresh() {
@@ -1196,6 +1424,8 @@ async function refresh() {
     refreshAnomalies();
     refreshPredictions();
     refreshThrottle();
+    refreshViolations();
+    refreshAgentConnections();
 
     if (health.pattern) {
       document.getElementById('pattern-text').textContent = health.pattern;

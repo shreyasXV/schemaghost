@@ -12,16 +12,18 @@ import (
 )
 
 var (
-	db            *sql.DB
-	collector     *Collector
-	detector      *Detector
-	alertManager  *AlertManager
-	historyStore  *HistoryStore
-	slackBot      *SlackNotifier
+	db              *sql.DB
+	collector       *Collector
+	detector        *Detector
+	alertManager    *AlertManager
+	historyStore    *HistoryStore
+	slackBot        *SlackNotifier
 	throttler       *Throttler
 	costEstimator   *CostEstimator
 	anomalyDetector *AnomalyDetector
 	predictor       *Predictor
+	agentTracker    *AgentTracker
+	policyEngine    *PolicyEngine
 )
 
 func main() {
@@ -118,6 +120,10 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	log.Printf("✅ Anomaly detector initialized (window: %d, sensitivity: %.1f)", anomalyDetector.windowSize, anomalyDetector.sensitivity)
 	log.Printf("✅ Predictor initialized (threshold: %.0fms)", predictor.thresholdMs)
 
+	agentTracker = NewAgentTracker()
+	policyEngine = NewPolicyEngine()
+	log.Printf("Policy engine initialized (enforcement: %s, file: %s)", policyEngine.enforcement, policyEngine.filePath)
+
 	detector = NewDetector(db)
 	collector = NewCollector(db)
 
@@ -152,6 +158,19 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 				costEstimator.Estimate(data)
 				anomalyDetector.Evaluate(data)
 				predictor.Evaluate(data)
+			}
+			// Poll agent connections and enforce policies
+			if err := agentTracker.Poll(db); err != nil {
+				log.Printf("Agent tracker poll error: %v", err)
+			} else {
+				conns := agentTracker.GetConnections()
+				if len(conns) > 0 {
+					log.Printf("🔍 Agent poll: found %d agent connections", len(conns))
+					for _, conn := range conns {
+						log.Printf("  → pid=%d agent=%s state=%s query=%s", conn.PID, conn.ApplicationName, conn.State, conn.Query)
+						policyEngine.EnforceOnConnection(db, conn)
+					}
+				}
 			}
 			<-ticker.C
 		}
@@ -210,6 +229,13 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	mux.HandleFunc("/api/agents/recommendation", handleAgentRecommendation)
 	mux.HandleFunc("/api/agents/anomalies", handleAgentAnomalies)
 	mux.HandleFunc("/api/agents/predictions", handleAgentPredictions)
+
+	// Firewall: agent identity + policy enforcement
+	mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
+	mux.HandleFunc("/api/firewall/agents/", handleFirewallAgentQueries)
+	mux.HandleFunc("/api/policies", handlePolicies)
+	mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
+	mux.HandleFunc("/api/violations", handleViolations)
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)

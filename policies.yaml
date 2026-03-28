@@ -1,0 +1,83 @@
+# FaultWall Agentic Firewall — Policy Configuration
+#
+# Agents identify themselves via PostgreSQL application_name:
+#   SET application_name = 'agent:<agent_id>:mission:<mission_id>';
+#
+# default_policy: deny | allow
+#   deny  = block any agent not explicitly listed
+#   allow = permit unlisted agents (only blocked_* rules apply)
+
+default_policy: deny
+
+agents:
+  cursor-ai:
+    description: "Cursor IDE agent"
+    missions:
+      summarize-feedback:
+        tables:
+          - "public.feedback"
+          - "public.products"
+        max_rows: 1000
+        max_query_time_ms: 5000
+
+      update-shipping:
+        tables:
+          - "public.orders"
+        max_rows: 100
+        conditions:
+          - "UPDATE must include WHERE clause"
+
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+      - DELETE
+      - ALTER
+      - CREATE
+      - GRANT
+
+    blocked_tables:
+      - public.users
+      - public.payments
+      - pg_catalog.*
+
+  langchain-agent:
+    description: "LangChain research agent"
+    missions:
+      research:
+        tables:
+          - "public.articles"
+          - "public.categories"
+        max_rows: 5000
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+      - DELETE
+      - ALTER
+      - CREATE
+      - GRANT
+    blocked_tables:
+      - public.users
+      - public.payments
+
+  demo-agent:
+    description: "Demo agent for testing policy enforcement"
+    missions:
+      read-feedback:
+        tables:
+          - "public.feedback"
+        max_rows: 500
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+      - DELETE
+      - ALTER
+      - CREATE
+      - GRANT
+    blocked_tables:
+      - public.users
+      - public.payments
+      - pg_catalog.*
+
+# Unidentified connections (no agent: prefix in application_name)
+unidentified:
+  policy: monitor  # monitor | deny | allow

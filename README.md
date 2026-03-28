@@ -1,8 +1,8 @@
 <p align="center">
   <img src="logo-v3.svg.png" alt="FaultWall" width="80">
   <h1 align="center">FaultWall</h1>
-  <p align="center"><strong>Autonomous Database SRE — detects anomalies, kills runaway queries, attributes costs.</strong></p>
-  <p align="center">eBPF-powered query detection and auto-throttling for PostgreSQL. One binary. Open source.</p>
+  <p align="center"><strong>The Agentic Data Firewall for PostgreSQL</strong></p>
+  <p align="center">Identity-aware policy enforcement for AI agents. Block rogue queries, protect PII, attribute costs — at the kernel level.</p>
 </p>
 
 <p align="center">
@@ -14,31 +14,63 @@
 
 ---
 
-**Your database is running a query that's about to take everyone down.** A bad JOIN, a missing index, an AI agent that just fired a full table scan. By the time you get paged, P99 is at 12 seconds and customers are churning. FaultWall detects it, kills the query, and tells you exactly which tenant caused it — autonomously, in real time.
+**Your AI agent has database credentials. What could go wrong?**
+
+A prompt injection hides a `DROP TABLE` in a customer feedback comment. Your agent blindly executes it. The WAF sees nothing — it's a legitimate connection with valid credentials. The database sees a normal query from an authorized user.
+
+FaultWall sees the intent. It knows which agent is running, what mission it's on, and what it's allowed to do. When the agent tries to access a table outside its mission scope — FaultWall kills the connection before the query completes.
+
+```
+Agent: agent:cursor-ai:mission:summarize-feedback
+Query: SELECT * FROM public.users        ← blocked table  
+Action: 🚨 pg_terminate_backend(pid)     ← connection killed
+Reason: blocked_table (not in mission scope)
+```
 
 ```bash
-# One binary. One env var. Done.
-DATABASE_URL=postgres://user:pass@host:5432/db ./faultwall
-# → http://localhost:8080
+# One binary. One policy file. Done.
+DATABASE_URL=postgres://user:pass@host:5432/db POLICY_FILE=./policies.yaml ./faultwall
 ```
 
 ---
 
-## What it does
+## How it works
 
-🔍 **Detects** — Auto-identifies your tenant isolation pattern (schema-per-tenant, row-level, database-per-tenant) and starts tracking per-tenant metrics immediately.
+**1. Agents identify themselves** via PostgreSQL's `application_name`:
+```sql
+SET application_name = 'agent:cursor-ai:mission:summarize-feedback';
+```
 
-📊 **Monitors** — Real-time dashboard showing tenant leaderboard, top slow queries, cost attribution, anomaly alerts, and breach predictions. Auto-refreshes every 5 seconds.
+**2. Policies define what each agent can do** (`policies.yaml`):
+```yaml
+agents:
+  cursor-ai:
+    missions:
+      summarize-feedback:
+        tables: [public.feedback, public.products]
+    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT]
+    blocked_tables: [public.users, public.payments]
+```
 
-🧠 **Learns** — Statistical anomaly detection builds per-tenant baselines. No LLM needed — z-score analysis flags when a tenant deviates from their normal behavior.
+**3. FaultWall enforces in real-time** — polls `pg_stat_activity`, parses the query, checks against the policy, terminates violating connections instantly.
 
-🔮 **Predicts** — Linear regression on metric trends: "acme_corp will breach the query time threshold in ~4 minutes." Gives you time to act before the outage.
+---
 
-⚡ **Throttles** — Auto-kills runaway queries, enforces per-tenant connection limits. Configurable grace periods and escalation (cancel → terminate).
+## Features
 
-💰 **Attributes cost** — "Tenant acme_corp is responsible for 74% of your database work and costs $338/mo of your $360 RDS bill." Finance teams love this.
+🛡️ **Agent Firewall** — Mission-scoped policies. Agent X can only `SELECT` on tables Y, Z during this mission. Everything else is blocked.
 
-🤖 **AI-native** — MCP server (10 tools) + agent REST API. AI agents can query tenant health, detect noisy neighbors, and throttle them — no human in the loop.
+🔍 **Anomaly Detection** — Genetic algorithm-tuned baselines per tenant. Learns what "normal" looks like, flags deviations automatically.
+
+⚡ **Auto-Throttling** — Kills runaway queries, enforces per-tenant connection limits before they cascade.
+
+💰 **Cost Attribution** — "Tenant acme_corp costs $338/mo of your $360 RDS bill." Per-tenant cost breakdowns in real-time.
+
+📊 **Real-Time Dashboard** — Violations, agent connections, tenant leaderboard, anomalies, predictions. Auto-refreshes.
+
+🤖 **MCP Server** — 10 tools for AI agent control. Agents can check policies and manage themselves autonomously.
+
+🔬 **eBPF Tracing** — Kernel-level verification that agents didn't bypass the proxy. *(Enterprise tier)*
 
 ---
 
