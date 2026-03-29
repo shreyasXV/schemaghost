@@ -24,7 +24,7 @@ func handleFirewallAgents(w http.ResponseWriter, r *http.Request) {
 		a := agentSummary{
 			PID:      c.PID,
 			State:    c.State,
-			Query:    c.Query,
+			Query:    truncateQuery(c.Query),
 			Username: c.Username,
 		}
 		if c.Identity != nil {

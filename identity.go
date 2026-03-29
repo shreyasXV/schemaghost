@@ -99,6 +99,10 @@ func (at *AgentTracker) Poll(db *sql.DB) error {
 		conns = append(conns, c)
 	}
 
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
 	at.mu.Lock()
 	at.connections = conns
 	at.mu.Unlock()

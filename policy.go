@@ -171,9 +171,8 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 
 	operation := ExtractSQLOperation(query)
 	tables := ExtractTables(query)
-	log.Printf("Policy check: agent=%s mission=%s op=%s tables=%v", identity.AgentID, identity.MissionID, operation, tables)
 
-	// Unidentified connection
+	// Unidentified connection — check BEFORE dereferencing identity
 	if identity == nil {
 		if cfg.Unidentified.Policy == "deny" {
 			v := PolicyViolation{
@@ -182,6 +181,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Reason:    "unidentified_connection",
 				Operation: operation,
 				PID:       pid,
+				Action:    "pending",
 				Timestamp: time.Now(),
 			}
 			return &v
@@ -193,7 +193,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Reason:    "unidentified_connection_monitored",
 				Operation: operation,
 				PID:       pid,
-				Action:    "monitored",
+				Action:    "pending",
 				Timestamp: time.Now(),
 			}
 			return &v
@@ -213,6 +213,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Reason:    "agent_not_in_policy",
 				Operation: operation,
 				PID:       pid,
+				Action:    "pending",
 				Timestamp: time.Now(),
 			}
 		}
@@ -229,6 +230,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Reason:    "blocked_operation",
 				Operation: operation,
 				PID:       pid,
+				Action:    "pending",
 				Timestamp: time.Now(),
 			}
 		}
@@ -245,6 +247,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Table:     table,
 				Operation: operation,
 				PID:       pid,
+				Action:    "pending",
 				Timestamp: time.Now(),
 			}
 		}
@@ -262,6 +265,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 					Reason:    "no_mission_policy",
 					Operation: operation,
 					PID:       pid,
+					Action:    "pending",
 					Timestamp: time.Now(),
 				}
 			}
@@ -280,6 +284,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 						Table:     table,
 						Operation: operation,
 						PID:       pid,
+						Action:    "pending",
 						Timestamp: time.Now(),
 					}
 				}
@@ -297,6 +302,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 						Reason:    "condition_violated",
 						Operation: operation,
 						PID:       pid,
+						Action:    "pending",
 						Timestamp: time.Now(),
 					}
 				}
@@ -305,6 +311,13 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	}
 
 	return nil
+}
+
+// GetEnforcement returns the current enforcement mode safely.
+func (pe *PolicyEngine) GetEnforcement() string {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	return pe.enforcement
 }
 
 // EnforceOnConnection checks a live agent connection and takes action if violated
@@ -324,14 +337,24 @@ func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *P
 	}
 
 	// Set action based on enforcement mode
-	if pe.enforcement == "enforce" {
+	if pe.GetEnforcement() == "enforce" {
 		violation.Action = "blocked"
-		// Terminate the backend
-		_, err := db.Exec("SELECT pg_terminate_backend($1)", conn.PID)
+		// Try graceful cancel first
+		var cancelled bool
+		err := db.QueryRow("SELECT pg_cancel_backend($1)", conn.PID).Scan(&cancelled)
 		if err != nil {
-			log.Printf("Policy enforcement: failed to terminate pid %d: %v", conn.PID, err)
-		} else {
-			log.Printf("Policy enforcement: terminated pid %d (agent=%s, reason=%s)", conn.PID, violation.AgentID, violation.Reason)
+			log.Printf("Policy enforcement: pg_cancel_backend failed for pid %d: %v", conn.PID, err)
+		} else if cancelled {
+			log.Printf("Policy enforcement: cancelled pid %d (agent=%s, reason=%s)", conn.PID, violation.AgentID, violation.Reason)
+		}
+		// If cancel didn't work, escalate to terminate
+		if !cancelled {
+			_, err = db.Exec("SELECT pg_terminate_backend($1)", conn.PID)
+			if err != nil {
+				log.Printf("Policy enforcement: failed to terminate pid %d: %v", conn.PID, err)
+			} else {
+				log.Printf("Policy enforcement: terminated pid %d (agent=%s, reason=%s)", conn.PID, violation.AgentID, violation.Reason)
+			}
 		}
 	} else {
 		violation.Action = "monitored"

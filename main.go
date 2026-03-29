@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -143,6 +145,10 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 		maxConns = 100
 	}
 
+	// Graceful shutdown context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	// Start background collection
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -172,7 +178,11 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 					}
 				}
 			}
-			<-ticker.C
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
@@ -231,18 +241,44 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	mux.HandleFunc("/api/agents/predictions", handleAgentPredictions)
 
 	// Firewall: agent identity + policy enforcement
-	mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
-	mux.HandleFunc("/api/firewall/agents/", handleFirewallAgentQueries)
+	mux.HandleFunc("/api/firewall/agents", bearerAuthMiddleware(handleFirewallAgents))
+	mux.HandleFunc("/api/firewall/agents/", bearerAuthMiddleware(handleFirewallAgentQueries))
 	mux.HandleFunc("/api/policies", handlePolicies)
-	mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
-	mux.HandleFunc("/api/violations", handleViolations)
+	mux.HandleFunc("/api/policies/reload", bearerAuthMiddleware(handlePoliciesReload))
+	mux.HandleFunc("/api/violations", bearerAuthMiddleware(handleViolations))
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)
 	mux.HandleFunc("/api/export/json", handleExportJSON)
 
-	log.Printf("🚀 FaultWall running on http://0.0.0.0:%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("Server error: %v", err)
+	bindAddr := os.Getenv("BIND_ADDR")
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
 	}
+
+	listenAddr := fmt.Sprintf("%s:%s", bindAddr, port)
+	log.Printf("🚀 FaultWall running on http://%s", listenAddr)
+
+	srv := &http.Server{
+		Addr:    listenAddr,
+		Handler: mux,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for interrupt
+	<-ctx.Done()
+	log.Println("Shutting down gracefully...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Shutdown error: %v", err)
+	}
+	log.Println("Server stopped")
 }

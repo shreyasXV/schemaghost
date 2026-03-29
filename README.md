@@ -271,7 +271,7 @@ Higher-level endpoints with `summary` fields — designed for LLMs, not just JSO
         └──────────┘     └──────────┘  └──────────┘  └──────────┘
 ```
 
-FaultWall is a **sidecar** — it connects to your database as a read-only client, polls `pg_stat_statements` and `pg_stat_activity`, and builds a tenant-aware view. It never modifies your data. Throttling uses `pg_cancel_backend()` / `pg_terminate_backend()` on runaway queries only.
+FaultWall is a **sidecar** — it connects to your database, polls `pg_stat_activity`, and enforces agent policies in real-time. In **monitor mode**, it's read-only and logs violations. In **enforce mode**, it actively terminates connections that violate policies using `pg_cancel_backend()` / `pg_terminate_backend()`. It never modifies your schema or data.
 
 ### Tenant detection
 
