@@ -9,6 +9,26 @@
 
 default_policy: deny
 
+# Global function blocklist — deny-by-default for dangerous PG functions.
+# These are blocked for ALL agents unless explicitly allowed per-agent.
+blocked_functions:
+  - pg_sleep
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_reload_conf
+  - pg_rotate_logfile
+  - lo_export
+  - lo_import
+  - lo_unlink
+  - pg_read_file
+  - pg_read_binary_file
+  - pg_ls_dir
+  - pg_stat_file
+  - set_config
+  - dblink
+  - dblink_exec
+  - pg_execute_server_program
+
 agents:
   cursor-ai:
     description: "Cursor IDE agent"

@@ -15,9 +15,10 @@ import (
 
 // PolicyConfig is the top-level policies.yaml structure
 type PolicyConfig struct {
-	DefaultPolicy string                 `yaml:"default_policy" json:"default_policy"`
-	Agents        map[string]AgentPolicy `yaml:"agents" json:"agents"`
-	Unidentified  UnidentifiedPolicy     `yaml:"unidentified" json:"unidentified"`
+	DefaultPolicy    string                 `yaml:"default_policy" json:"default_policy"`
+	BlockedFunctions []string               `yaml:"blocked_functions" json:"blocked_functions"`
+	Agents           map[string]AgentPolicy `yaml:"agents" json:"agents"`
+	Unidentified     UnidentifiedPolicy     `yaml:"unidentified" json:"unidentified"`
 }
 
 // AgentPolicy defines rules for a specific agent
@@ -26,6 +27,7 @@ type AgentPolicy struct {
 	Missions          map[string]MissionPolicy  `yaml:"missions" json:"missions"`
 	BlockedOperations []string                  `yaml:"blocked_operations" json:"blocked_operations"`
 	BlockedTables     []string                  `yaml:"blocked_tables" json:"blocked_tables"`
+	AllowedFunctions  []string                  `yaml:"allowed_functions" json:"allowed_functions"`
 }
 
 // MissionPolicy defines per-mission table/operation access
@@ -169,8 +171,52 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		return nil
 	}
 
-	operation := ExtractSQLOperation(query)
-	tables := ExtractTables(query)
+	// Parse query using AST (falls back to regex automatically)
+	parsed := ParseQuery(query)
+	operation := parsed.Operation
+	tables := parsed.Tables
+	functions := parsed.Functions
+
+	// ── Global function blocklist ──
+	if len(cfg.BlockedFunctions) > 0 && len(functions) > 0 {
+		// Build agent allowlist if we have identity
+		var agentAllowed map[string]bool
+		if identity != nil {
+			if ap, ok := cfg.Agents[identity.AgentID]; ok && len(ap.AllowedFunctions) > 0 {
+				agentAllowed = make(map[string]bool)
+				for _, fn := range ap.AllowedFunctions {
+					agentAllowed[strings.ToLower(fn)] = true
+				}
+			}
+		}
+
+		for _, fn := range functions {
+			fnLower := strings.ToLower(fn)
+			if isFunctionBlocked(fnLower, cfg.BlockedFunctions) {
+				// Check if agent has an explicit allowlist override
+				if agentAllowed != nil && agentAllowed[fnLower] {
+					continue
+				}
+				agentID := "unidentified"
+				missionID := ""
+				if identity != nil {
+					agentID = identity.AgentID
+					missionID = identity.MissionID
+				}
+				v := PolicyViolation{
+					AgentID:   agentID,
+					MissionID: missionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_function:" + fn,
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+				return &v
+			}
+		}
+	}
 
 	// Unidentified connection — check BEFORE dereferencing identity
 	if identity == nil {
@@ -365,10 +411,10 @@ func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *P
 	return violation
 }
 
-// ── SQL Parsing (regex-based for v1) ──
+// ── SQL Parsing (regex-based fallback for when AST fails) ──
 
-// ExtractSQLOperation returns the SQL operation type (SELECT, INSERT, etc.)
-func ExtractSQLOperation(query string) string {
+// ExtractSQLOperationRegex returns the SQL operation type using regex (fallback)
+func ExtractSQLOperationRegex(query string) string {
 	normalized := strings.TrimSpace(query)
 	// Strip leading comments
 	for strings.HasPrefix(normalized, "/*") {
@@ -399,8 +445,8 @@ func ExtractSQLOperation(query string) string {
 
 var tableExtractRe = regexp.MustCompile(`(?i)\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z_][a-zA-Z0-9_.]*(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_.]*)*)`)
 
-// ExtractTables extracts table names from a SQL query
-func ExtractTables(query string) []string {
+// ExtractTablesRegex extracts table names from a SQL query using regex (fallback)
+func ExtractTablesRegex(query string) []string {
 	matches := tableExtractRe.FindAllStringSubmatch(query, -1)
 	seen := make(map[string]bool)
 	var tables []string
@@ -499,4 +545,21 @@ func truncateQuery(q string) string {
 		return q[:200] + "..."
 	}
 	return q
+}
+
+// isFunctionBlocked checks if a function name is in the blocklist
+func isFunctionBlocked(fn string, blockedList []string) bool {
+	for _, blocked := range blockedList {
+		if strings.EqualFold(fn, blocked) {
+			return true
+		}
+		// Also match schema-qualified: "pg_catalog.pg_sleep" matches "pg_sleep"
+		if strings.Contains(fn, ".") {
+			parts := strings.SplitN(fn, ".", 2)
+			if strings.EqualFold(parts[len(parts)-1], blocked) {
+				return true
+			}
+		}
+	}
+	return false
 }
