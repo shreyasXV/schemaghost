@@ -12,25 +12,25 @@ import (
 
 // Prediction represents a projected threshold breach
 type Prediction struct {
-	Timestamp         time.Time `json:"timestamp"`
-	TenantID          string    `json:"tenant_id"`
-	Metric            string    `json:"metric"`
-	CurrentValue      float64   `json:"current_value"`
-	ProjectedValue    float64   `json:"projected_value"`
-	ThresholdValue    float64   `json:"threshold_value"`
-	TimeToThresholdMin float64  `json:"time_to_threshold_min"`
-	Trend             string    `json:"trend"`
-	Confidence        float64   `json:"confidence"`
-	Message           string    `json:"message"`
-	expiresAt         time.Time
+	Timestamp          time.Time `json:"timestamp"`
+	TenantID           string    `json:"tenant_id"`
+	Metric             string    `json:"metric"`
+	CurrentValue       float64   `json:"current_value"`
+	ProjectedValue     float64   `json:"projected_value"`
+	ThresholdValue     float64   `json:"threshold_value"`
+	TimeToThresholdMin float64   `json:"time_to_threshold_min"`
+	Trend              string    `json:"trend"`
+	Confidence         float64   `json:"confidence"`
+	Message            string    `json:"message"`
+	expiresAt          time.Time
 }
 
 // Predictor uses rate-of-change analysis to predict threshold breaches
 type Predictor struct {
-	mu             sync.RWMutex
-	predictions    []Prediction
-	thresholdMs    float64
-	connThreshold  float64
+	mu            sync.RWMutex
+	predictions   []Prediction
+	thresholdMs   float64
+	connThreshold float64
 }
 
 // NewPredictor creates a Predictor with config from env vars

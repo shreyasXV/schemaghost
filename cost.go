@@ -10,19 +10,19 @@ import (
 
 // TenantCost holds cost attribution for a single tenant
 type TenantCost struct {
-	TenantID          string  `json:"tenant_id"`
+	TenantID            string  `json:"tenant_id"`
 	QueryTimeProportion float64 `json:"query_time_proportion"`
-	HourlyCost        float64 `json:"hourly_cost"`
-	DailyCost         float64 `json:"daily_cost"`
-	MonthlyCost       float64 `json:"monthly_cost"`
-	TotalQueryTimeMs  float64 `json:"total_query_time_ms"`
+	HourlyCost          float64 `json:"hourly_cost"`
+	DailyCost           float64 `json:"daily_cost"`
+	MonthlyCost         float64 `json:"monthly_cost"`
+	TotalQueryTimeMs    float64 `json:"total_query_time_ms"`
 }
 
 // CostEstimator calculates per-tenant cost attribution
 type CostEstimator struct {
-	mu             sync.RWMutex
-	rdsHourlyCost  float64
-	latestCosts    []TenantCost
+	mu            sync.RWMutex
+	rdsHourlyCost float64
+	latestCosts   []TenantCost
 }
 
 // NewCostEstimator creates a CostEstimator with config from env vars
@@ -56,12 +56,12 @@ func (ce *CostEstimator) Estimate(data CollectorData) []TenantCost {
 
 		hourly := ce.rdsHourlyCost * proportion
 		tc := TenantCost{
-			TenantID:          t.TenantID,
+			TenantID:            t.TenantID,
 			QueryTimeProportion: math.Round(proportion*10000) / 10000,
-			HourlyCost:        math.Round(hourly*100) / 100,
-			DailyCost:         math.Round(hourly*24*100) / 100,
-			MonthlyCost:       math.Round(hourly*24*30*100) / 100,
-			TotalQueryTimeMs:  math.Round(tenantQueryTime*100) / 100,
+			HourlyCost:          math.Round(hourly*100) / 100,
+			DailyCost:           math.Round(hourly*24*100) / 100,
+			MonthlyCost:         math.Round(hourly*24*30*100) / 100,
+			TotalQueryTimeMs:    math.Round(tenantQueryTime*100) / 100,
 		}
 		costs = append(costs, tc)
 	}

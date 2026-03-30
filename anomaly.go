@@ -12,11 +12,11 @@ import (
 
 // MetricSample is a single point-in-time sample of tenant metrics
 type MetricSample struct {
-	Timestamp    time.Time `json:"timestamp"`
-	AvgQueryTimeMs float64 `json:"avg_query_time_ms"`
-	QueryCount   int64     `json:"query_count"`
-	Connections  int       `json:"connections"`
-	RowsRead     int64     `json:"rows_read"`
+	Timestamp      time.Time `json:"timestamp"`
+	AvgQueryTimeMs float64   `json:"avg_query_time_ms"`
+	QueryCount     int64     `json:"query_count"`
+	Connections    int       `json:"connections"`
+	RowsRead       int64     `json:"rows_read"`
 }
 
 // TenantBaseline tracks rolling statistics for one tenant
@@ -57,15 +57,15 @@ func (tb *TenantBaseline) meanStdDev(extract func(MetricSample) float64) (float6
 
 // Anomaly represents a detected anomaly for a tenant metric
 type Anomaly struct {
-	Timestamp    time.Time `json:"timestamp"`
-	TenantID     string    `json:"tenant_id"`
-	Metric       string    `json:"metric"`
-	CurrentValue float64   `json:"current_value"`
-	BaselineMean float64   `json:"baseline_mean"`
-	BaselineStdDev float64 `json:"baseline_std_dev"`
-	ZScore       float64   `json:"z_score"`
-	Severity     string    `json:"severity"`
-	Message      string    `json:"message"`
+	Timestamp      time.Time `json:"timestamp"`
+	TenantID       string    `json:"tenant_id"`
+	Metric         string    `json:"metric"`
+	CurrentValue   float64   `json:"current_value"`
+	BaselineMean   float64   `json:"baseline_mean"`
+	BaselineStdDev float64   `json:"baseline_std_dev"`
+	ZScore         float64   `json:"z_score"`
+	Severity       string    `json:"severity"`
+	Message        string    `json:"message"`
 }
 
 // AnomalyDetector maintains per-tenant baselines and detects anomalies
@@ -81,7 +81,7 @@ type AnomalyDetector struct {
 	// Track last alert time per tenant+metric to avoid re-alerting within 5 min
 	lastAlerted map[string]time.Time
 	// Track consecutive below-threshold cycles per tenant+metric for resolution
-	belowCount  map[string]int
+	belowCount map[string]int
 }
 
 // NewAnomalyDetector creates an AnomalyDetector with config from env vars
@@ -303,13 +303,13 @@ func (ad *AnomalyDetector) GetRecent() []Anomaly {
 
 // BaselineSummary is a summary of a tenant's baseline for API responses
 type BaselineSummary struct {
-	TenantID      string  `json:"tenant_id"`
-	SampleCount   int     `json:"sample_count"`
-	AvgQueryMean  float64 `json:"avg_query_time_mean"`
+	TenantID       string  `json:"tenant_id"`
+	SampleCount    int     `json:"sample_count"`
+	AvgQueryMean   float64 `json:"avg_query_time_mean"`
 	AvgQueryStdDev float64 `json:"avg_query_time_std_dev"`
 	QueryCountMean float64 `json:"query_count_mean"`
-	ConnMean      float64 `json:"connections_mean"`
-	RowsReadMean  float64 `json:"rows_read_mean"`
+	ConnMean       float64 `json:"connections_mean"`
+	RowsReadMean   float64 `json:"rows_read_mean"`
 }
 
 // GetBaselines returns baseline summaries for all tenants

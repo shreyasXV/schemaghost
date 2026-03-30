@@ -48,17 +48,17 @@ func handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 	predictionCount := len(predictor.GetPredictions())
 
 	writeJSON(w, map[string]interface{}{
-		"healthy":              healthy,
-		"noisy_tenants":        noisy,
-		"total_tenants":        len(data.Tenants),
-		"active_alerts":        len(activeAlerts),
-		"throttle_events_1h":   throttleCount,
-		"anomaly_count":        anomalyCount,
-		"prediction_count":     predictionCount,
-		"cache_hit_ratio":      data.Overview.CacheHitRatio,
-		"total_connections":    data.Overview.TotalConnections,
-		"qps":                  data.Overview.QueriesPerSec,
-		"summary":              summary,
+		"healthy":            healthy,
+		"noisy_tenants":      noisy,
+		"total_tenants":      len(data.Tenants),
+		"active_alerts":      len(activeAlerts),
+		"throttle_events_1h": throttleCount,
+		"anomaly_count":      anomalyCount,
+		"prediction_count":   predictionCount,
+		"cache_hit_ratio":    data.Overview.CacheHitRatio,
+		"total_connections":  data.Overview.TotalConnections,
+		"qps":                data.Overview.QueriesPerSec,
+		"summary":            summary,
 	})
 }
 
@@ -89,13 +89,13 @@ func handleAgentNoisy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		entry := map[string]interface{}{
-			"tenant_id":       t.TenantID,
-			"avg_time_ms":     t.AvgTimeMs,
-			"p99_ms":          t.P99Ms,
-			"queries":         t.Queries,
-			"connections":     t.Connections,
-			"resource_pct":    fmt.Sprintf("%.1f%%", pct),
-			"summary":         fmt.Sprintf("%s has avg query time %.0fms (%s of total resources), %d active connections", t.TenantID, t.AvgTimeMs, fmt.Sprintf("%.1f%%", pct), t.Connections),
+			"tenant_id":    t.TenantID,
+			"avg_time_ms":  t.AvgTimeMs,
+			"p99_ms":       t.P99Ms,
+			"queries":      t.Queries,
+			"connections":  t.Connections,
+			"resource_pct": fmt.Sprintf("%.1f%%", pct),
+			"summary":      fmt.Sprintf("%s has avg query time %.0fms (%s of total resources), %d active connections", t.TenantID, t.AvgTimeMs, fmt.Sprintf("%.1f%%", pct), t.Connections),
 		}
 		if c, ok := costMap[t.TenantID]; ok {
 			entry["monthly_cost"] = c.MonthlyCost
@@ -367,14 +367,14 @@ func handleAgentPredictions(w http.ResponseWriter, r *http.Request) {
 	var entries []map[string]interface{}
 	for _, p := range preds {
 		entries = append(entries, map[string]interface{}{
-			"tenant_id":            p.TenantID,
-			"metric":               p.Metric,
-			"current_value":        p.CurrentValue,
-			"threshold_value":      p.ThresholdValue,
+			"tenant_id":             p.TenantID,
+			"metric":                p.Metric,
+			"current_value":         p.CurrentValue,
+			"threshold_value":       p.ThresholdValue,
 			"time_to_threshold_min": p.TimeToThresholdMin,
-			"trend":                p.Trend,
-			"confidence":           p.Confidence,
-			"summary":              p.Message,
+			"trend":                 p.Trend,
+			"confidence":            p.Confidence,
+			"summary":               p.Message,
 		})
 	}
 

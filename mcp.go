@@ -486,14 +486,14 @@ func mcpGetHealth() (interface{}, error) {
 	activeAlerts := alertManager.GetActiveAlerts()
 
 	return map[string]interface{}{
-		"connections":    data.Overview.TotalConnections,
+		"connections":     data.Overview.TotalConnections,
 		"max_connections": data.Overview.MaxConnections,
 		"cache_hit_ratio": data.Overview.CacheHitRatio,
-		"qps":            data.Overview.QueriesPerSec,
-		"db_size":        data.Overview.DBSize,
-		"active_alerts":  len(activeAlerts),
-		"total_tenants":  len(data.Tenants),
-		"collected_at":   data.Overview.CollectedAt,
+		"qps":             data.Overview.QueriesPerSec,
+		"db_size":         data.Overview.DBSize,
+		"active_alerts":   len(activeAlerts),
+		"total_tenants":   len(data.Tenants),
+		"collected_at":    data.Overview.CollectedAt,
 	}, nil
 }
 
@@ -524,12 +524,12 @@ func mcpGetPredictions() (interface{}, error) {
 	var summaries []map[string]interface{}
 	for _, p := range preds {
 		summaries = append(summaries, map[string]interface{}{
-			"tenant_id":           p.TenantID,
-			"metric":              p.Metric,
-			"time_to_threshold":   p.TimeToThresholdMin,
-			"trend":               p.Trend,
-			"confidence":          p.Confidence,
-			"summary":             p.Message,
+			"tenant_id":         p.TenantID,
+			"metric":            p.Metric,
+			"time_to_threshold": p.TimeToThresholdMin,
+			"trend":             p.Trend,
+			"confidence":        p.Confidence,
+			"summary":           p.Message,
 		})
 	}
 	return map[string]interface{}{

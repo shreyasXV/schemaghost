@@ -11,10 +11,10 @@ import (
 type IsolationPattern string
 
 const (
-	PatternUnknown    IsolationPattern = "unknown"
-	PatternSchema     IsolationPattern = "schema-per-tenant"
-	PatternRowLevel   IsolationPattern = "row-level-isolation"
-	PatternDatabase   IsolationPattern = "database-per-tenant"
+	PatternUnknown  IsolationPattern = "unknown"
+	PatternSchema   IsolationPattern = "schema-per-tenant"
+	PatternRowLevel IsolationPattern = "row-level-isolation"
+	PatternDatabase IsolationPattern = "database-per-tenant"
 )
 
 // TenantColumn common column names used for row-level tenant isolation

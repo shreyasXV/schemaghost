@@ -54,29 +54,29 @@ type AlertRule struct {
 
 // Alert is an active or historical alert instance
 type Alert struct {
-	ID        string     `json:"id"`
-	RuleID    string     `json:"rule_id"`
-	RuleName  string     `json:"rule_name"`
-	TenantID  string     `json:"tenant_id"`
-	Metric    AlertMetric `json:"metric"`
-	Value     float64    `json:"value"`
-	Threshold float64    `json:"threshold"`
-	Level     AlertLevel `json:"level"`
-	Message   string     `json:"message"`
-	FiredAt   time.Time  `json:"fired_at"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
-	Active    bool       `json:"active"`
+	ID         string      `json:"id"`
+	RuleID     string      `json:"rule_id"`
+	RuleName   string      `json:"rule_name"`
+	TenantID   string      `json:"tenant_id"`
+	Metric     AlertMetric `json:"metric"`
+	Value      float64     `json:"value"`
+	Threshold  float64     `json:"threshold"`
+	Level      AlertLevel  `json:"level"`
+	Message    string      `json:"message"`
+	FiredAt    time.Time   `json:"fired_at"`
+	ResolvedAt *time.Time  `json:"resolved_at,omitempty"`
+	Active     bool        `json:"active"`
 }
 
 // AlertManager manages rules, active alerts, and history
 type AlertManager struct {
-	mu          sync.RWMutex
-	rules       []AlertRule
-	active      map[string]*Alert // key = ruleID + ":" + tenantID
-	history     []*Alert
-	webhookURL  string
-	slack       *SlackNotifier
-	nextRuleID  int
+	mu         sync.RWMutex
+	rules      []AlertRule
+	active     map[string]*Alert // key = ruleID + ":" + tenantID
+	history    []*Alert
+	webhookURL string
+	slack      *SlackNotifier
+	nextRuleID int
 }
 
 // NewAlertManager creates a manager with default rules

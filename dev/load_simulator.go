@@ -40,9 +40,9 @@ var profiles = []TenantProfile{
 
 // Realistic query templates per industry
 var queryTemplates = map[string][]struct {
-	sql    string
-	heavy  bool
-	name   string
+	sql     string
+	heavy   bool
+	name    string
 	delayMs int
 }{
 	"ecommerce": {
@@ -123,9 +123,9 @@ var incidents = []Incident{
 }
 
 var (
-	mu             sync.RWMutex
+	mu              sync.RWMutex
 	activeIncidents = make(map[int]Incident) // tenantIdx -> incident
-	startTime      time.Time
+	startTime       time.Time
 )
 
 func main() {
@@ -240,7 +240,10 @@ func runStatsReporter(db *sql.DB) {
 				total += c
 			}
 			// Show top 3 by query count
-			type kv struct{ k string; v int64 }
+			type kv struct {
+				k string
+				v int64
+			}
 			var sorted []kv
 			for _, p := range profiles {
 				sorted = append(sorted, kv{p.Name, counts[p.Schema]})
@@ -253,7 +256,9 @@ func runStatsReporter(db *sql.DB) {
 				}
 			}
 			for i := 0; i < 3 && i < len(sorted); i++ {
-				if i > 0 { fmt.Print(" | ") }
+				if i > 0 {
+					fmt.Print(" | ")
+				}
 				fmt.Printf("%s: %d", sorted[i].k, sorted[i].v)
 			}
 			fmt.Printf(" (total: %d)\n", total)
@@ -311,9 +316,9 @@ func runTenant(db *sql.DB, idx int, p TenantProfile) {
 
 		// Pick a query
 		var tmpl struct {
-			sql    string
-			heavy  bool
-			name   string
+			sql     string
+			heavy   bool
+			name    string
 			delayMs int
 		}
 
@@ -346,9 +351,9 @@ func runTenant(db *sql.DB, idx int, p TenantProfile) {
 		}
 
 		go func(t struct {
-			sql    string
-			heavy  bool
-			name   string
+			sql     string
+			heavy   bool
+			name    string
 			delayMs int
 		}) {
 			executeQuery(db, p.Schema, t)
@@ -360,9 +365,9 @@ func runTenant(db *sql.DB, idx int, p TenantProfile) {
 }
 
 func executeQuery(db *sql.DB, schema string, tmpl struct {
-	sql    string
-	heavy  bool
-	name   string
+	sql     string
+	heavy   bool
+	name    string
 	delayMs int
 }) {
 	// Build the query — some templates have two %s (for JOINs)

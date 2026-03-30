@@ -94,11 +94,11 @@ func NewThrottler(slack *SlackNotifier) *Throttler {
 
 // activeQuery represents a running query from pg_stat_activity
 type activeQuery struct {
-	PID           int
-	TenantID      string
-	DurationMs    float64
-	Query         string
-	StateChange   time.Time
+	PID         int
+	TenantID    string
+	DurationMs  float64
+	Query       string
+	StateChange time.Time
 }
 
 // Evaluate checks pg_stat_activity for long-running queries and connection limits

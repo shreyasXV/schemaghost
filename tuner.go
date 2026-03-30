@@ -13,14 +13,14 @@ import (
 // TunerConfig holds the tunable parameters for anomaly detection + throttling
 type TunerConfig struct {
 	// Anomaly detection
-	AnomalyWindowSize   int     `json:"anomaly_window_size"`
-	AnomalySensitivity  float64 `json:"anomaly_sensitivity"`  // z-score threshold
-	AnomalyMinSamples   int     `json:"anomaly_min_samples"`
+	AnomalyWindowSize  int     `json:"anomaly_window_size"`
+	AnomalySensitivity float64 `json:"anomaly_sensitivity"` // z-score threshold
+	AnomalyMinSamples  int     `json:"anomaly_min_samples"`
 
 	// Predictor
-	PredictThresholdMs  float64 `json:"predict_threshold_ms"`
-	PredictWindowSize   int     `json:"predict_window_size"`
-	PredictConfidence   float64 `json:"predict_confidence"`    // min R² to act on prediction
+	PredictThresholdMs float64 `json:"predict_threshold_ms"`
+	PredictWindowSize  int     `json:"predict_window_size"`
+	PredictConfidence  float64 `json:"predict_confidence"` // min R² to act on prediction
 
 	// Throttle
 	ThrottleMaxQueryMs  float64 `json:"throttle_max_query_ms"`
@@ -29,9 +29,9 @@ type TunerConfig struct {
 
 	// Scoring weights (internal — how much each metric matters)
 	WeightDetection     float64 `json:"weight_detection"`      // reward for catching anomalies
-	WeightSpeed         float64 `json:"weight_speed"`           // reward for fast detection
-	WeightFalsePositive float64 `json:"weight_false_positive"`  // penalty for false alarms
-	WeightCollateral    float64 `json:"weight_collateral"`      // penalty for throttling healthy tenants
+	WeightSpeed         float64 `json:"weight_speed"`          // reward for fast detection
+	WeightFalsePositive float64 `json:"weight_false_positive"` // penalty for false alarms
+	WeightCollateral    float64 `json:"weight_collateral"`     // penalty for throttling healthy tenants
 }
 
 // IncidentScenario represents a known test case
@@ -49,9 +49,9 @@ type IncidentScenario struct {
 type TunerResult struct {
 	Config         TunerConfig `json:"config"`
 	Score          float64     `json:"score"`
-	DetectionRate  float64     `json:"detection_rate"`   // % of real incidents caught
+	DetectionRate  float64     `json:"detection_rate"` // % of real incidents caught
 	FalsePositives int         `json:"false_positives"`
-	AvgDetectTime  float64     `json:"avg_detect_time"`  // seconds to detect
+	AvgDetectTime  float64     `json:"avg_detect_time"` // seconds to detect
 	Generation     int         `json:"generation"`
 }
 
@@ -132,15 +132,51 @@ func Crossover(a, b TunerConfig) TunerConfig {
 	}
 
 	// Uniform crossover — pick each param from either parent
-	if rand.Float64() < 0.5 { child.AnomalyWindowSize = a.AnomalyWindowSize } else { child.AnomalyWindowSize = b.AnomalyWindowSize }
-	if rand.Float64() < 0.5 { child.AnomalySensitivity = a.AnomalySensitivity } else { child.AnomalySensitivity = b.AnomalySensitivity }
-	if rand.Float64() < 0.5 { child.AnomalyMinSamples = a.AnomalyMinSamples } else { child.AnomalyMinSamples = b.AnomalyMinSamples }
-	if rand.Float64() < 0.5 { child.PredictThresholdMs = a.PredictThresholdMs } else { child.PredictThresholdMs = b.PredictThresholdMs }
-	if rand.Float64() < 0.5 { child.PredictWindowSize = a.PredictWindowSize } else { child.PredictWindowSize = b.PredictWindowSize }
-	if rand.Float64() < 0.5 { child.PredictConfidence = a.PredictConfidence } else { child.PredictConfidence = b.PredictConfidence }
-	if rand.Float64() < 0.5 { child.ThrottleMaxQueryMs = a.ThrottleMaxQueryMs } else { child.ThrottleMaxQueryMs = b.ThrottleMaxQueryMs }
-	if rand.Float64() < 0.5 { child.ThrottleMaxConns = a.ThrottleMaxConns } else { child.ThrottleMaxConns = b.ThrottleMaxConns }
-	if rand.Float64() < 0.5 { child.ThrottleGracePeriod = a.ThrottleGracePeriod } else { child.ThrottleGracePeriod = b.ThrottleGracePeriod }
+	if rand.Float64() < 0.5 {
+		child.AnomalyWindowSize = a.AnomalyWindowSize
+	} else {
+		child.AnomalyWindowSize = b.AnomalyWindowSize
+	}
+	if rand.Float64() < 0.5 {
+		child.AnomalySensitivity = a.AnomalySensitivity
+	} else {
+		child.AnomalySensitivity = b.AnomalySensitivity
+	}
+	if rand.Float64() < 0.5 {
+		child.AnomalyMinSamples = a.AnomalyMinSamples
+	} else {
+		child.AnomalyMinSamples = b.AnomalyMinSamples
+	}
+	if rand.Float64() < 0.5 {
+		child.PredictThresholdMs = a.PredictThresholdMs
+	} else {
+		child.PredictThresholdMs = b.PredictThresholdMs
+	}
+	if rand.Float64() < 0.5 {
+		child.PredictWindowSize = a.PredictWindowSize
+	} else {
+		child.PredictWindowSize = b.PredictWindowSize
+	}
+	if rand.Float64() < 0.5 {
+		child.PredictConfidence = a.PredictConfidence
+	} else {
+		child.PredictConfidence = b.PredictConfidence
+	}
+	if rand.Float64() < 0.5 {
+		child.ThrottleMaxQueryMs = a.ThrottleMaxQueryMs
+	} else {
+		child.ThrottleMaxQueryMs = b.ThrottleMaxQueryMs
+	}
+	if rand.Float64() < 0.5 {
+		child.ThrottleMaxConns = a.ThrottleMaxConns
+	} else {
+		child.ThrottleMaxConns = b.ThrottleMaxConns
+	}
+	if rand.Float64() < 0.5 {
+		child.ThrottleGracePeriod = a.ThrottleGracePeriod
+	} else {
+		child.ThrottleGracePeriod = b.ThrottleGracePeriod
+	}
 
 	return child
 }
@@ -175,7 +211,7 @@ func (c TunerConfig) Score() TunerResult {
 			// Base noise ~ 1/sqrt(windowSize), signal ~ (multiplier - 1)
 			baseNoise := 1.0 / math.Sqrt(math.Max(float64(c.AnomalyWindowSize), 1.0))
 			signalStrength := (incident.QPSMultiplier - 1.0)
-			estimatedZScore := signalStrength / (baseNoise * 3.0 + 0.5) // noise floor + variance
+			estimatedZScore := signalStrength / (baseNoise*3.0 + 0.5) // noise floor + variance
 
 			// Detection: z-score exceeds threshold AND we detect within incident window
 			if estimatedZScore > c.AnomalySensitivity && effectiveWait < incidentDuration {
@@ -373,14 +409,22 @@ func countExpected() int {
 }
 
 func clampInt(v, min, max int) int {
-	if v < min { return min }
-	if v > max { return max }
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
 	return v
 }
 
 func clampFloat(v, min, max float64) float64 {
-	if v < min { return min }
-	if v > max { return max }
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
 	return v
 }
 

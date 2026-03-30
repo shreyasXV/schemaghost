@@ -23,11 +23,11 @@ type PolicyConfig struct {
 
 // AgentPolicy defines rules for a specific agent
 type AgentPolicy struct {
-	Description       string                    `yaml:"description" json:"description"`
-	Missions          map[string]MissionPolicy  `yaml:"missions" json:"missions"`
-	BlockedOperations []string                  `yaml:"blocked_operations" json:"blocked_operations"`
-	BlockedTables     []string                  `yaml:"blocked_tables" json:"blocked_tables"`
-	AllowedFunctions  []string                  `yaml:"allowed_functions" json:"allowed_functions"`
+	Description       string                   `yaml:"description" json:"description"`
+	Missions          map[string]MissionPolicy `yaml:"missions" json:"missions"`
+	BlockedOperations []string                 `yaml:"blocked_operations" json:"blocked_operations"`
+	BlockedTables     []string                 `yaml:"blocked_tables" json:"blocked_tables"`
+	AllowedFunctions  []string                 `yaml:"allowed_functions" json:"allowed_functions"`
 }
 
 // MissionPolicy defines per-mission table/operation access
