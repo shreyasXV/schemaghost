@@ -726,7 +726,7 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">💰 Cost per Tenant</span>
-      <span class="card-subtitle">Estimated monthly cost allocation based on query time</span>
+      <span class="card-subtitle">Estimated monthly cost allocation based on query time · Default: $0.50/hr (set RDS_HOURLY_COST to adjust)</span>
     </div>
     <div class="cost-grid" id="cost-grid">
       <div class="empty">Loading cost data…</div>
@@ -773,6 +773,7 @@
       <div class="card-header">
         <span class="card-title">🚨 Policy Violations</span>
         <span class="card-subtitle" id="violation-count">—</span>
+        <input type="text" id="violation-filter" placeholder="Filter by agent or reason…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:200px;">
       </div>
       <div id="violation-list">
         <div class="empty">No policy violations detected</div>
@@ -801,10 +802,10 @@
         <thead>
           <tr>
             <th>Agent</th>
-            <th>Mission</th>
-            <th>PID</th>
-            <th>State</th>
-            <th>Query</th>
+            <th>Last Mission</th>
+            <th>Status</th>
+            <th>Activity</th>
+            <th>Last Seen</th>
             <th>User</th>
           </tr>
         </thead>
@@ -855,7 +856,7 @@ function fmtNum(n) {
 }
 
 function fmtMs(ms) {
-  if (ms == null || ms === 0) return '—';
+  if (ms == null || ms === 0) return '<span style="color:var(--muted);font-size:11px">collecting…</span>';
   if (ms >= 1000) return (ms/1000).toFixed(2)+'s';
   return ms.toFixed(1)+'ms';
 }
@@ -1291,7 +1292,7 @@ async function refreshThrottle() {
     if (!Array.isArray(tenants) || tenants.length === 0) {
       const enabled = data.enabled !== undefined ? data.enabled : false;
       statusEl.textContent = enabled ? 'Enabled — no active throttles' : 'Disabled';
-      grid.innerHTML = `<div class="empty">${enabled ? 'All tenants within limits' : 'Throttling is disabled (set THROTTLE_ENABLED=true)'}</div>`;
+      grid.innerHTML = `<div class="empty">${enabled ? 'All tenants within limits' : 'Throttling is disabled. Set <code>THROTTLE_ENABLED=true</code> to auto-kill runaway queries. <a href="https://github.com/shreyasXV/faultwall#throttling" style="color:var(--accent)">Learn more →</a>'}</div>`;
       return;
     }
     const activeCount = tenants.filter(t => t.throttled).length;
@@ -1312,42 +1313,63 @@ async function refreshThrottle() {
 }
 
 // ── Render Violations ──────────────────────────────────────────────────
+let allViolations = [];
+
+// Filter input handler
+document.getElementById('violation-filter').addEventListener('input', function() {
+  renderFilteredViolations(this.value.toLowerCase().trim());
+});
+
+function renderFilteredViolations(filter) {
+  const list = document.getElementById('violation-list');
+  const filtered = filter
+    ? allViolations.filter(v =>
+        (v.agent_id || '').toLowerCase().includes(filter) ||
+        (v.reason || '').toLowerCase().includes(filter) ||
+        (v.action || '').toLowerCase().includes(filter) ||
+        (v.table || '').toLowerCase().includes(filter) ||
+        (v.query || '').toLowerCase().includes(filter))
+    : allViolations;
+
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="empty">${filter ? 'No violations matching "' + escHtml(filter) + '"' : 'No policy violations detected'}</div>`;
+  } else {
+    const shown = filtered.slice(0, 50);
+    list.innerHTML = shown.map(v => {
+      const icon = v.action === 'blocked' ? '🔴' : '🟡';
+      const badgeCls = v.action === 'blocked' ? 'blocked' : 'monitored';
+      const badgeText = v.action === 'blocked' ? 'BLOCKED' : 'MONITORED';
+      const reason = (v.reason || '').replace(/_/g, ' ');
+      const ts = v.timestamp ? timeAgo(v.timestamp) : '';
+      return `<div class="violation-item">
+        <span class="violation-icon">${icon}</span>
+        <div class="violation-body">
+          <div class="violation-msg">
+            <span class="violation-badge ${badgeCls}">${badgeText}</span>
+            Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id ? ' / ' + escHtml(v.mission_id) : ''} &mdash; ${escHtml(reason)}
+            ${v.table ? ' (table: ' + escHtml(v.table) + ')' : ''}
+            ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
+          </div>
+          <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
+          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}</div>
+        </div>
+      </div>`;
+    }).join('') + (filtered.length > 50 ? `<div class="empty">Showing 50 of ${filtered.length}</div>` : '');
+  }
+}
+
 async function refreshViolations() {
   try {
     const data = await fetchJSON('/api/violations');
-    const list = document.getElementById('violation-list');
     const countEl = document.getElementById('violation-count');
-    const violations = data.violations || [];
-    countEl.textContent = violations.length > 0 ? violations.length + ' total' : 'None';
+    allViolations = data.violations || [];
+    countEl.textContent = allViolations.length > 0 ? allViolations.length + ' total' : 'None';
 
-    if (violations.length === 0) {
-      list.innerHTML = '<div class="empty">No policy violations detected</div>';
-    } else {
-      const shown = violations.slice(0, 20);
-      list.innerHTML = shown.map(v => {
-        const icon = v.action === 'blocked' ? '🔴' : '🟡';
-        const badgeCls = v.action === 'blocked' ? 'blocked' : 'monitored';
-        const badgeText = v.action === 'blocked' ? 'BLOCKED' : 'MONITORED';
-        const reason = (v.reason || '').replace(/_/g, ' ');
-        const ts = v.timestamp ? timeAgo(v.timestamp) : '';
-        return `<div class="violation-item">
-          <span class="violation-icon">${icon}</span>
-          <div class="violation-body">
-            <div class="violation-msg">
-              <span class="violation-badge ${badgeCls}">${badgeText}</span>
-              Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id ? ' / ' + escHtml(v.mission_id) : ''} &mdash; ${escHtml(reason)}
-              ${v.table ? ' (table: ' + escHtml(v.table) + ')' : ''}
-              ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
-            </div>
-            <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
-            <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}</div>
-          </div>
-        </div>`;
-      }).join('');
-    }
+    const filter = document.getElementById('violation-filter').value.toLowerCase().trim();
+    renderFilteredViolations(filter);
 
     // Build per-agent chart
-    renderViolationChart(violations);
+    renderViolationChart(allViolations);
   } catch(e) {
     document.getElementById('violation-list').innerHTML = '<div class="empty">Violations endpoint unavailable</div>';
   }
@@ -1386,19 +1408,31 @@ async function refreshAgentConnections() {
     const tbody = document.getElementById('agent-conn-tbody');
     const countEl = document.getElementById('agent-conn-count');
     const agents = data.agents || [];
-    countEl.textContent = agents.length > 0 ? agents.length + ' connected' : 'None';
+    const activeCount = agents.filter(a => a.active).length;
+    countEl.textContent = agents.length > 0
+      ? `${activeCount} active · ${agents.length} total`
+      : 'None detected';
 
     if (agents.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty">No agent connections detected</td></tr>';
       return;
     }
+    // Sort: active first, then by last_seen desc
+    agents.sort((a, b) => {
+      if (a.active !== b.active) return b.active ? 1 : -1;
+      return (b.last_seen || '').localeCompare(a.last_seen || '');
+    });
     tbody.innerHTML = agents.map(a => {
-      return `<tr>
+      const statusDot = a.active
+        ? '<span style="color:#38a169">● active</span>'
+        : '<span style="color:var(--muted)">○ inactive</span>';
+      const lastSeen = a.last_seen ? timeAgo(a.last_seen) : '—';
+      return `<tr style="${a.active ? '' : 'opacity:0.6'}">
         <td><span class="tenant-id">${escHtml(a.agent_id || '—')}</span></td>
-        <td>${escHtml(a.mission_id || '—')}</td>
-        <td>${a.pid}</td>
-        <td>${escHtml(a.state || '—')}</td>
-        <td><span class="query-text" title="${escHtml(a.query)}">${escHtml((a.query || '').slice(0, 80))}${(a.query || '').length > 80 ? '...' : ''}</span></td>
+        <td>${escHtml(a.last_mission || '—')}</td>
+        <td>${statusDot}</td>
+        <td>${a.total_queries || 0} queries · ${a.violations || 0} violations</td>
+        <td>${lastSeen}</td>
         <td>${escHtml(a.username || '—')}</td>
       </tr>`;
     }).join('');

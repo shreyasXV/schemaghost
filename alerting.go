@@ -77,6 +77,7 @@ type AlertManager struct {
 	webhookURL string
 	slack      *SlackNotifier
 	nextRuleID int
+	startTime  time.Time
 }
 
 // NewAlertManager creates a manager with default rules
@@ -86,6 +87,7 @@ func NewAlertManager(webhookURL string, slack *SlackNotifier) *AlertManager {
 		webhookURL: webhookURL,
 		slack:      slack,
 		nextRuleID: 10,
+		startTime:  time.Now(),
 	}
 	// Default rules
 	am.rules = []AlertRule{
@@ -136,10 +138,19 @@ func (am *AlertManager) Evaluate(data CollectorData, maxConns int) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 
+	// Grace period: suppress cache_hit alerts for first 5 minutes after startup
+	// (fresh installs always show 0% until the cache warms up)
+	inGracePeriod := time.Since(am.startTime) < 5*time.Minute
+
 	// Track which alert keys we saw this cycle (to resolve stale ones)
 	seen := make(map[string]bool)
 
 	for _, rule := range am.rules {
+		// Skip cache_hit alerts during grace period
+		if inGracePeriod && rule.Metric == MetricCacheHit {
+			continue
+		}
+
 		for _, t := range data.Tenants {
 			// Check tenant match filter
 			if rule.TenantMatch != "" && rule.TenantMatch != t.TenantID {
