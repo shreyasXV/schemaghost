@@ -26,14 +26,31 @@ type AgentConnection struct {
 	QueryStart      *time.Time     `json:"query_start,omitempty"`
 }
 
-// AgentTracker tracks active agent connections
+// AgentRecord is a persistent record of an agent that has connected
+type AgentRecord struct {
+	AgentID      string    `json:"agent_id"`
+	LastMission  string    `json:"last_mission"`
+	LastSeen     time.Time `json:"last_seen"`
+	FirstSeen    time.Time `json:"first_seen"`
+	Active       bool      `json:"active"`
+	TotalQueries int       `json:"total_queries"`
+	Violations   int       `json:"violations"`
+	LastPID      int       `json:"last_pid"`
+	LastClientIP string    `json:"last_client_ip"`
+	Username     string    `json:"username"`
+}
+
+// AgentTracker tracks active and historical agent connections
 type AgentTracker struct {
 	mu          sync.RWMutex
 	connections []AgentConnection
+	agents      map[string]*AgentRecord // keyed by agent_id
 }
 
 func NewAgentTracker() *AgentTracker {
-	return &AgentTracker{}
+	return &AgentTracker{
+		agents: make(map[string]*AgentRecord),
+	}
 }
 
 // ParseAgentIdentity parses "agent:<agent_id>:mission:<mission_id>" format.
@@ -85,6 +102,8 @@ func (at *AgentTracker) Poll(db *sql.DB) error {
 	defer rows.Close()
 
 	var conns []AgentConnection
+	activeAgentIDs := make(map[string]bool)
+
 	for rows.Next() {
 		var c AgentConnection
 		var queryStart sql.NullTime
@@ -97,6 +116,11 @@ func (at *AgentTracker) Poll(db *sql.DB) error {
 		}
 		c.Identity = ParseAgentIdentity(c.ApplicationName)
 		conns = append(conns, c)
+
+		// Update persistent agent record
+		if c.Identity != nil && c.Identity.AgentID != "" {
+			activeAgentIDs[c.Identity.AgentID] = true
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -105,11 +129,63 @@ func (at *AgentTracker) Poll(db *sql.DB) error {
 
 	at.mu.Lock()
 	at.connections = conns
+
+	// Update persistent records for active connections
+	now := time.Now()
+	for _, c := range conns {
+		if c.Identity == nil || c.Identity.AgentID == "" {
+			continue
+		}
+		agentID := c.Identity.AgentID
+		rec, exists := at.agents[agentID]
+		if !exists {
+			rec = &AgentRecord{
+				AgentID:   agentID,
+				FirstSeen: now,
+			}
+			at.agents[agentID] = rec
+		}
+		rec.LastSeen = now
+		rec.Active = true
+		rec.LastPID = c.PID
+		rec.LastClientIP = c.ClientAddr
+		rec.Username = c.Username
+		if c.Identity.MissionID != "" {
+			rec.LastMission = c.Identity.MissionID
+		}
+		if c.State == "active" && c.Query != "" {
+			rec.TotalQueries++
+		}
+	}
+
+	// Mark agents not in current poll as inactive
+	for agentID, rec := range at.agents {
+		if !activeAgentIDs[agentID] {
+			rec.Active = false
+		}
+	}
+
 	at.mu.Unlock()
 	return nil
 }
 
-// GetConnections returns all tracked agent connections
+// RecordViolation increments the violation count for an agent
+func (at *AgentTracker) RecordViolation(agentID string) {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if rec, exists := at.agents[agentID]; exists {
+		rec.Violations++
+	} else {
+		at.agents[agentID] = &AgentRecord{
+			AgentID:    agentID,
+			FirstSeen:  time.Now(),
+			LastSeen:   time.Now(),
+			Violations: 1,
+		}
+	}
+}
+
+// GetConnections returns all currently active agent connections
 func (at *AgentTracker) GetConnections() []AgentConnection {
 	at.mu.RLock()
 	defer at.mu.RUnlock()
@@ -129,4 +205,26 @@ func (at *AgentTracker) GetAgentConnections(agentID string) []AgentConnection {
 		}
 	}
 	return result
+}
+
+// GetAllAgents returns all known agents (active and inactive)
+func (at *AgentTracker) GetAllAgents() []AgentRecord {
+	at.mu.RLock()
+	defer at.mu.RUnlock()
+	result := make([]AgentRecord, 0, len(at.agents))
+	for _, rec := range at.agents {
+		result = append(result, *rec)
+	}
+	return result
+}
+
+// GetAgent returns a specific agent record
+func (at *AgentTracker) GetAgent(agentID string) *AgentRecord {
+	at.mu.RLock()
+	defer at.mu.RUnlock()
+	if rec, exists := at.agents[agentID]; exists {
+		cp := *rec
+		return &cp
+	}
+	return nil
 }

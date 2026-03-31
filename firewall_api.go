@@ -5,38 +5,48 @@ import (
 	"strings"
 )
 
-// handleFirewallAgents returns all connected agents and their missions
+// handleFirewallAgents returns all known agents (active and historical)
 // GET /api/firewall/agents
 func handleFirewallAgents(w http.ResponseWriter, r *http.Request) {
+	// Return persistent agent records (active + inactive)
+	allAgents := agentTracker.GetAllAgents()
+
+	// Also include live connections for active agents
 	conns := agentTracker.GetConnections()
 
-	type agentSummary struct {
-		AgentID   string `json:"agent_id"`
-		MissionID string `json:"mission_id"`
-		PID       int    `json:"pid"`
-		State     string `json:"state"`
-		Query     string `json:"query"`
-		Username  string `json:"username"`
+	type agentResponse struct {
+		AgentID      string  `json:"agent_id"`
+		LastMission  string  `json:"last_mission"`
+		Active       bool    `json:"active"`
+		FirstSeen    string  `json:"first_seen"`
+		LastSeen     string  `json:"last_seen"`
+		TotalQueries int     `json:"total_queries"`
+		Violations   int     `json:"violations"`
+		LastPID      int     `json:"last_pid"`
+		LastClientIP string  `json:"last_client_ip"`
+		Username     string  `json:"username"`
 	}
 
-	var agents []agentSummary
-	for _, c := range conns {
-		a := agentSummary{
-			PID:      c.PID,
-			State:    c.State,
-			Query:    truncateQuery(c.Query),
-			Username: c.Username,
-		}
-		if c.Identity != nil {
-			a.AgentID = c.Identity.AgentID
-			a.MissionID = c.Identity.MissionID
-		}
-		agents = append(agents, a)
+	agents := make([]agentResponse, 0, len(allAgents))
+	for _, rec := range allAgents {
+		agents = append(agents, agentResponse{
+			AgentID:      rec.AgentID,
+			LastMission:  rec.LastMission,
+			Active:       rec.Active,
+			FirstSeen:    rec.FirstSeen.Format("2006-01-02T15:04:05Z"),
+			LastSeen:     rec.LastSeen.Format("2006-01-02T15:04:05Z"),
+			TotalQueries: rec.TotalQueries,
+			Violations:   rec.Violations,
+			LastPID:      rec.LastPID,
+			LastClientIP: rec.LastClientIP,
+			Username:     rec.Username,
+		})
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"agents": agents,
-		"count":  len(agents),
+		"agents":             agents,
+		"count":              len(agents),
+		"active_connections": len(conns),
 	})
 }
 

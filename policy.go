@@ -408,6 +408,12 @@ func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *P
 	}
 
 	pe.addViolation(*violation)
+
+	// Update persistent agent tracker with violation count
+	if agentTracker != nil && violation.AgentID != "" {
+		agentTracker.RecordViolation(violation.AgentID)
+	}
+
 	return violation
 }
 
