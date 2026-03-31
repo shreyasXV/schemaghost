@@ -177,47 +177,6 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	tables := parsed.Tables
 	functions := parsed.Functions
 
-	// ── Global function blocklist ──
-	if len(cfg.BlockedFunctions) > 0 && len(functions) > 0 {
-		// Build agent allowlist if we have identity
-		var agentAllowed map[string]bool
-		if identity != nil {
-			if ap, ok := cfg.Agents[identity.AgentID]; ok && len(ap.AllowedFunctions) > 0 {
-				agentAllowed = make(map[string]bool)
-				for _, fn := range ap.AllowedFunctions {
-					agentAllowed[strings.ToLower(fn)] = true
-				}
-			}
-		}
-
-		for _, fn := range functions {
-			fnLower := strings.ToLower(fn)
-			if isFunctionBlocked(fnLower, cfg.BlockedFunctions) {
-				// Check if agent has an explicit allowlist override
-				if agentAllowed != nil && agentAllowed[fnLower] {
-					continue
-				}
-				agentID := "unidentified"
-				missionID := ""
-				if identity != nil {
-					agentID = identity.AgentID
-					missionID = identity.MissionID
-				}
-				v := PolicyViolation{
-					AgentID:   agentID,
-					MissionID: missionID,
-					Query:     truncateQuery(query),
-					Reason:    "blocked_function:" + fn,
-					Operation: operation,
-					PID:       pid,
-					Action:    "pending",
-					Timestamp: time.Now(),
-				}
-				return &v
-			}
-		}
-	}
-
 	// Unidentified connection — check BEFORE dereferencing identity
 	if identity == nil {
 		if cfg.Unidentified.Policy == "deny" {
@@ -351,6 +310,36 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 						Action:    "pending",
 						Timestamp: time.Now(),
 					}
+				}
+			}
+		}
+	}
+
+	// ── Global function blocklist (checked last for most specific violation reason) ──
+	if len(cfg.BlockedFunctions) > 0 && len(functions) > 0 {
+		var agentAllowed map[string]bool
+		if ap, ok := cfg.Agents[identity.AgentID]; ok && len(ap.AllowedFunctions) > 0 {
+			agentAllowed = make(map[string]bool)
+			for _, fn := range ap.AllowedFunctions {
+				agentAllowed[strings.ToLower(fn)] = true
+			}
+		}
+
+		for _, fn := range functions {
+			fnLower := strings.ToLower(fn)
+			if isFunctionBlocked(fnLower, cfg.BlockedFunctions) {
+				if agentAllowed != nil && agentAllowed[fnLower] {
+					continue
+				}
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_function:" + fn,
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
 				}
 			}
 		}

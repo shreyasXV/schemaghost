@@ -612,6 +612,9 @@
     <span class="badge pattern-badge">
       <span id="pattern-text">{{.Pattern}}</span>
     </span>
+    <span class="badge" id="enforcement-badge" style="{{if eq .Enforcement "enforce"}}background: linear-gradient(135deg, rgba(229,62,62,0.15), rgba(229,62,62,0.25)); border-color: rgba(229,62,62,0.4); color: #e53e3e;{{else}}background: linear-gradient(135deg, rgba(246,173,31,0.15), rgba(246,173,31,0.25)); border-color: rgba(246,173,31,0.4); color: #f6ad1f;{{end}} font-weight: bold;">
+      {{if eq .Enforcement "enforce"}}🛡️ enforce{{else}}👁️ monitor{{end}}
+    </span>
     <span class="badge">
       <span class="dot" id="status-dot"></span>
       <span id="status-text">connecting…</span>

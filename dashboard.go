@@ -26,11 +26,13 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Pattern string
-		Tenants int
+		Pattern     string
+		Tenants     int
+		Enforcement string
 	}{
-		Pattern: string(detector.Pattern),
-		Tenants: len(detector.Tenants),
+		Pattern:     string(detector.Pattern),
+		Tenants:     len(detector.Tenants),
+		Enforcement: policyEngine.GetEnforcement(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
