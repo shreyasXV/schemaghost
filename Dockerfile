@@ -29,6 +29,7 @@ RUN apk add --no-cache ca-certificates tzdata
 # Copy binary and templates
 COPY --from=builder /build/faultwall /app/faultwall
 COPY templates/ /app/templates/
+COPY assets/logos/ /app/assets/logos/
 
 # Non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup

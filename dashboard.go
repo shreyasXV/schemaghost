@@ -11,6 +11,33 @@ import (
 	"runtime"
 )
 
+// handleFavicon serves the favicon from assets/logos/icon.png
+func handleFavicon(w http.ResponseWriter, r *http.Request) {
+	candidates := []string{
+		"assets/logos/icon.png",
+		"/app/assets/logos/icon.png",
+	}
+	// Try relative to source file
+	if _, file, _, ok := runtime.Caller(0); ok {
+		dir := filepath.Dir(file)
+		candidates = append(candidates, filepath.Join(dir, "assets/logos/icon.png"))
+	}
+	// Try relative to working directory
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "assets/logos/icon.png"))
+	}
+
+	for _, path := range candidates {
+		if data, err := os.ReadFile(path); err == nil {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.Write(data)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
 // handleDashboard serves the HTML dashboard
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
