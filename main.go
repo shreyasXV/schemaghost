@@ -203,6 +203,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/favicon.png", handleFavicon)
+	mux.HandleFunc("/favicon.ico", handleFavicon)
 	mux.HandleFunc("/", handleDashboard)
 	mux.HandleFunc("/api/tenants", handleTenants)
 	mux.HandleFunc("/api/queries", handleQueries)

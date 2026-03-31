@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 // handleFirewallAgents returns all known agents (active and historical)
@@ -33,8 +34,8 @@ func handleFirewallAgents(w http.ResponseWriter, r *http.Request) {
 			AgentID:      rec.AgentID,
 			LastMission:  rec.LastMission,
 			Active:       rec.Active,
-			FirstSeen:    rec.FirstSeen.Format("2006-01-02T15:04:05Z"),
-			LastSeen:     rec.LastSeen.Format("2006-01-02T15:04:05Z"),
+			FirstSeen:    rec.FirstSeen.UTC().Format(time.RFC3339),
+			LastSeen:     rec.LastSeen.UTC().Format(time.RFC3339),
 			TotalQueries: rec.TotalQueries,
 			Violations:   rec.Violations,
 			LastPID:      rec.LastPID,
