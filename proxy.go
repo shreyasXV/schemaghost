@@ -1,0 +1,395 @@
+package main
+
+import (
+	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"strings"
+	"sync"
+
+	"github.com/jackc/pgproto3/v2"
+)
+
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorCyan   = "\033[36m"
+	colorBold   = "\033[1m"
+)
+
+func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine) {
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Fatalf("Proxy: failed to listen on %s: %v", listenAddr, err)
+	}
+	log.Printf("🛡️  FaultWall proxy listening on %s%s%s → upstream %s%s%s",
+		colorCyan, listenAddr, colorReset, colorCyan, upstreamAddr, colorReset)
+	log.Printf("   Enforcement mode: %s%s%s", colorBold, pe.GetEnforcement(), colorReset)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Printf("Proxy: accept error: %v", err)
+			continue
+		}
+		go handleProxyConn(conn, upstreamAddr, pe)
+	}
+}
+
+func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine) {
+	defer client.Close()
+
+	// 1. Read startup message (no type byte — starts with 4-byte length)
+	startupBuf, err := readStartupMessage(client)
+	if err != nil {
+		log.Printf("Proxy: failed to read startup: %v", err)
+		return
+	}
+
+	// Handle SSL request (protocol version 80877103)
+	if len(startupBuf) >= 8 {
+		proto := binary.BigEndian.Uint32(startupBuf[4:8])
+		if proto == 80877103 { // SSLRequest
+			client.Write([]byte{'N'}) // Deny SSL — client will retry plaintext
+			startupBuf, err = readStartupMessage(client)
+			if err != nil {
+				log.Printf("Proxy: failed to read startup after SSL denial: %v", err)
+				return
+			}
+		} else if proto == 80877104 { // GSSENCRequest
+			client.Write([]byte{'N'})
+			startupBuf, err = readStartupMessage(client)
+			if err != nil {
+				log.Printf("Proxy: failed to read startup after GSS denial: %v", err)
+				return
+			}
+		} else if proto == 80877102 { // CancelRequest — just forward to upstream
+			upstream, dialErr := net.Dial("tcp", upstreamAddr)
+			if dialErr == nil {
+				upstream.Write(startupBuf)
+				upstream.Close()
+			}
+			return
+		}
+	}
+
+	// 2. Extract application_name from startup parameters
+	appName := extractAppName(startupBuf)
+	identity := ParseAgentIdentity(appName)
+
+	agentLabel := "unknown"
+	if identity != nil {
+		agentLabel = identity.AgentID
+		if identity.MissionID != "" {
+			agentLabel += "/" + identity.MissionID
+		}
+	} else if appName != "" {
+		agentLabel = appName
+	}
+
+	log.Printf("🔌 New connection: %sagent=%s%s remote=%s", colorCyan, agentLabel, colorReset, client.RemoteAddr())
+
+	// 3. Connect to upstream Postgres
+	upstream, err := net.Dial("tcp", upstreamAddr)
+	if err != nil {
+		log.Printf("Proxy: upstream dial failed (%s): %v", upstreamAddr, err)
+		return
+	}
+	defer upstream.Close()
+
+	// 4. Forward startup message to upstream
+	if _, err := upstream.Write(startupBuf); err != nil {
+		log.Printf("Proxy: failed to forward startup to upstream: %v", err)
+		return
+	}
+
+	// 5. Relay auth handshake until ReadyForQuery ('Z')
+	if err := relayAuth(client, upstream); err != nil {
+		log.Printf("Proxy: auth relay failed for agent=%s: %v", agentLabel, err)
+		return
+	}
+
+	// 6. Main proxy loop
+	proxyQueryLoop(client, upstream, identity, agentLabel, pe)
+}
+
+// readStartupMessage reads a PostgreSQL startup message (no type byte).
+func readStartupMessage(r io.Reader) ([]byte, error) {
+	lenBuf := make([]byte, 4)
+	if _, err := io.ReadFull(r, lenBuf); err != nil {
+		return nil, fmt.Errorf("reading startup length: %w", err)
+	}
+	msgLen := int(binary.BigEndian.Uint32(lenBuf))
+	if msgLen < 4 || msgLen > 10240 {
+		return nil, fmt.Errorf("invalid startup message length: %d", msgLen)
+	}
+
+	buf := make([]byte, msgLen)
+	copy(buf[:4], lenBuf)
+	if _, err := io.ReadFull(r, buf[4:]); err != nil {
+		return nil, fmt.Errorf("reading startup payload: %w", err)
+	}
+	return buf, nil
+}
+
+// extractAppName parses the startup message parameters for application_name.
+func extractAppName(buf []byte) string {
+	if len(buf) < 9 {
+		return ""
+	}
+	// Skip: 4 bytes length + 4 bytes protocol version
+	params := buf[8:]
+	for len(params) > 1 {
+		idx := indexOf(params, 0)
+		if idx <= 0 {
+			break
+		}
+		key := string(params[:idx])
+		params = params[idx+1:]
+
+		idx = indexOf(params, 0)
+		if idx < 0 {
+			break
+		}
+		val := string(params[:idx])
+		params = params[idx+1:]
+
+		if key == "application_name" {
+			return val
+		}
+	}
+	return ""
+}
+
+func indexOf(b []byte, v byte) int {
+	for i, c := range b {
+		if c == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// relayAuth relays messages between client and upstream during auth handshake.
+func relayAuth(client, upstream net.Conn) error {
+	for {
+		// Read message from upstream (server)
+		msgType, payload, err := readWireMessage(upstream)
+		if err != nil {
+			return fmt.Errorf("reading upstream auth message: %w", err)
+		}
+
+		// Forward to client
+		if err := writeWireMessage(client, msgType, payload); err != nil {
+			return fmt.Errorf("forwarding auth to client: %w", err)
+		}
+
+		switch msgType {
+		case 'Z': // ReadyForQuery — auth complete
+			return nil
+		case 'E': // ErrorResponse from upstream
+			return fmt.Errorf("upstream rejected connection")
+		case 'R': // Authentication message
+			if len(payload) >= 4 {
+				authType := binary.BigEndian.Uint32(payload[:4])
+				// 0=Ok, 12=SASLFinal — no client response needed
+				// Everything else (3=Cleartext, 5=MD5, 10=SASL, 11=SASLContinue) needs a response
+				if authType != 0 && authType != 12 {
+					cType, cPayload, cErr := readWireMessage(client)
+					if cErr != nil {
+						return fmt.Errorf("reading client auth response: %w", cErr)
+					}
+					if wErr := writeWireMessage(upstream, cType, cPayload); wErr != nil {
+						return fmt.Errorf("forwarding client auth to upstream: %w", wErr)
+					}
+				}
+			}
+		}
+		// ParameterStatus ('S'), BackendKeyData ('K'), etc. — already forwarded
+	}
+}
+
+// readWireMessage reads a standard PostgreSQL wire message: [1 byte type][4 byte length][payload].
+func readWireMessage(r io.Reader) (byte, []byte, error) {
+	header := make([]byte, 5)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return 0, nil, err
+	}
+	msgType := header[0]
+	bodyLen := int(binary.BigEndian.Uint32(header[1:5])) - 4
+	if bodyLen < 0 {
+		return msgType, nil, nil
+	}
+	if bodyLen > 1<<24 { // 16MB sanity limit
+		return 0, nil, fmt.Errorf("message too large: %d bytes", bodyLen)
+	}
+	payload := make([]byte, bodyLen)
+	if bodyLen > 0 {
+		if _, err := io.ReadFull(r, payload); err != nil {
+			return 0, nil, err
+		}
+	}
+	return msgType, payload, nil
+}
+
+// writeWireMessage writes a standard PostgreSQL wire message.
+func writeWireMessage(w io.Writer, msgType byte, payload []byte) error {
+	header := make([]byte, 5)
+	header[0] = msgType
+	binary.BigEndian.PutUint32(header[1:5], uint32(len(payload)+4))
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	if len(payload) > 0 {
+		if _, err := w.Write(payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// proxyQueryLoop is the main loop: reads client messages, inspects queries, forwards or blocks.
+func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine) {
+	var clientWriteMu sync.Mutex
+
+	// Goroutine: relay all upstream responses → client
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := upstream.Read(buf)
+			if n > 0 {
+				clientWriteMu.Lock()
+				_, wErr := client.Write(buf[:n])
+				clientWriteMu.Unlock()
+				if wErr != nil {
+					return
+				}
+			}
+			if err != nil {
+				client.Close() // signal main goroutine
+				return
+			}
+		}
+	}()
+
+	for {
+		msgType, payload, err := readWireMessage(client)
+		if err != nil {
+			upstream.Close()
+			return
+		}
+
+		// Simple query protocol: type 'Q'
+		if msgType == 'Q' && len(payload) > 1 {
+			// Payload is null-terminated SQL string
+			query := string(payload[:len(payload)-1])
+
+			// Fail-open: catch panics in policy check
+			violation := safeCheckQuery(pe, identity, query)
+
+			if violation != nil && pe.GetEnforcement() == "enforce" {
+				violation.Action = "blocked"
+				pe.addViolation(*violation)
+				clientWriteMu.Lock()
+				sendBlockedResponse(client, violation)
+				clientWriteMu.Unlock()
+				logBlocked(agentLabel, query, violation)
+				continue // do NOT forward to upstream
+			}
+
+			if violation != nil {
+				// Monitor mode — log but still forward
+				violation.Action = "monitored"
+				pe.addViolation(*violation)
+				logMonitored(agentLabel, query, violation)
+			} else {
+				logAllowed(agentLabel, query)
+			}
+		}
+
+		// Forward message to upstream (all non-blocked messages)
+		if err := writeWireMessage(upstream, msgType, payload); err != nil {
+			log.Printf("Proxy: upstream write error: %v", err)
+			return
+		}
+
+		// Terminate
+		if msgType == 'X' {
+			return
+		}
+	}
+}
+
+// safeCheckQuery calls pe.CheckQuery with panic recovery (fail-open).
+func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (v *PolicyViolation) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("%s[FAIL-OPEN]%s panic in policy check: %v — allowing query", colorYellow, colorReset, r)
+			v = nil
+		}
+	}()
+	return pe.CheckQuery(identity, query, 0)
+}
+
+// sendBlockedResponse sends an ErrorResponse + ReadyForQuery to the client.
+func sendBlockedResponse(client net.Conn, v *PolicyViolation) {
+	detail := v.Reason
+	if v.Table != "" {
+		detail += " (table: " + v.Table + ")"
+	}
+	if v.Operation != "" {
+		detail += " (op: " + v.Operation + ")"
+	}
+
+	errResp := &pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501", // insufficient_privilege
+		Message:  "[BLOCKED by FaultWall] " + detail,
+	}
+	buf, _ := errResp.Encode(nil)
+	client.Write(buf)
+
+	readyMsg := &pgproto3.ReadyForQuery{TxStatus: 'I'}
+	buf, _ = readyMsg.Encode(nil)
+	client.Write(buf)
+}
+
+// ── Colorful logging ──
+
+func querySnippet(q string) string {
+	q = strings.TrimSpace(q)
+	q = strings.ReplaceAll(q, "\n", " ")
+	q = strings.Join(strings.Fields(q), " ") // collapse whitespace
+	if len(q) > 80 {
+		return q[:80] + "…"
+	}
+	return q
+}
+
+func logAllowed(agent, query string) {
+	log.Printf("%s%s[ALLOWED]%s agent=%-20s query=%s",
+		colorGreen, colorBold, colorReset, agent, querySnippet(query))
+}
+
+func logBlocked(agent, query string, v *PolicyViolation) {
+	detail := v.Reason
+	if v.Table != "" {
+		detail += " table=" + v.Table
+	}
+	log.Printf("%s%s[BLOCKED]%s agent=%-20s reason=%-25s query=%s",
+		colorRed, colorBold, colorReset, agent, detail, querySnippet(query))
+}
+
+func logMonitored(agent, query string, v *PolicyViolation) {
+	detail := v.Reason
+	if v.Table != "" {
+		detail += " table=" + v.Table
+	}
+	log.Printf("%s%s[MONITOR]%s agent=%-20s reason=%-25s query=%s",
+		colorYellow, colorBold, colorReset, agent, detail, querySnippet(query))
+}

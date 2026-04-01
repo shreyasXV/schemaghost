@@ -29,15 +29,33 @@ var (
 )
 
 func main() {
-	// Check for --mcp flag
+	// Check for mode flags
 	mcpMode := false
 	tunerMode := false
-	for _, arg := range os.Args[1:] {
-		if arg == "--mcp" {
+	proxyMode := false
+	proxyListen := ":5433"
+	proxyUpstream := "localhost:5432"
+	proxyPolicies := "./policies.yaml"
+	for i, arg := range os.Args[1:] {
+		switch arg {
+		case "--mcp":
 			mcpMode = true
-		}
-		if arg == "--tune" {
+		case "--tune":
 			tunerMode = true
+		case "--proxy":
+			proxyMode = true
+		case "--listen":
+			if i+1 < len(os.Args[1:])-0 {
+				proxyListen = os.Args[i+2]
+			}
+		case "--upstream":
+			if i+1 < len(os.Args[1:])-0 {
+				proxyUpstream = os.Args[i+2]
+			}
+		case "--policies":
+			if i+1 < len(os.Args[1:])-0 {
+				proxyPolicies = os.Args[i+2]
+			}
 		}
 	}
 
@@ -50,6 +68,16 @@ func main() {
 			log.Fatalf("Error saving: %v", err)
 		}
 		fmt.Printf("  Results saved to: %s\n", outPath)
+		return
+	}
+
+	// Proxy mode — inline L7 query firewall, no DB needed
+	if proxyMode {
+		os.Setenv("POLICY_FILE", proxyPolicies)
+		os.Setenv("POLICY_ENFORCEMENT", "enforce")
+		policyEngine = NewPolicyEngine()
+		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
+		runProxy(proxyListen, proxyUpstream, policyEngine)
 		return
 	}
 
