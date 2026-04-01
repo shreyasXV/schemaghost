@@ -2,7 +2,7 @@
   <img src="assets/logos/icon.png" alt="FaultWall" width="80">
   <h1 align="center">FaultWall</h1>
   <p align="center"><strong>The Agentic Data Firewall for PostgreSQL</strong></p>
-  <p align="center">Identity-aware policy enforcement for AI agents. Block rogue queries, protect PII, attribute costs — at the kernel level.</p>
+  <p align="center">Identity-aware SQL enforcement for AI agents. Block rogue queries before they hit your database.</p>
 </p>
 
 <p align="center">
@@ -14,63 +14,54 @@
 
 ---
 
-**Your AI agent has database credentials. What could go wrong?**
+**Your AI agent has your database password. FaultWall makes sure that's safe.**
 
 A prompt injection hides a `DROP TABLE` in a customer feedback comment. Your agent blindly executes it. The WAF sees nothing — it's a legitimate connection with valid credentials. The database sees a normal query from an authorized user.
 
-FaultWall sees the intent. It knows which agent is running, what mission it's on, and what it's allowed to do. When the agent tries to access a table outside its mission scope — FaultWall kills the connection before the query completes.
+FaultWall intercepts the query **before it reaches PostgreSQL**, parses the SQL, checks it against your policy, and blocks it:
 
 ```
-Agent: agent:cursor-ai:mission:summarize-feedback
-Query: SELECT * FROM public.users        ← blocked table  
-Action: 🚨 pg_terminate_backend(pid)     ← connection killed
-Reason: blocked_table (not in mission scope)
+🔌 New connection: agent=cursor-ai/summarize-feedback
+🟢 [ALLOWED] agent=cursor-ai/summarize-feedback  query=SELECT * FROM feedback LIMIT 100;
+🔴 [BLOCKED] agent=cursor-ai/summarize-feedback  reason=blocked_operation  query=DROP TABLE users;
+🔴 [BLOCKED] agent=rogue-bot/steal               reason=agent_not_in_policy  query=SELECT * FROM users;
+🔴 [BLOCKED] agent=cursor-ai/summarize-feedback  reason=blocked_function:pg_read_file  query=SELECT pg_read_file('/etc/passwd');
 ```
+
+---
+
+## Two Modes
+
+### 🛡️ Proxy Mode (Enforce) — **Recommended**
+
+FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQL query is parsed and checked **before it reaches the database**. Blocked queries never execute.
+
+- Intercepts 100% of queries (Simple + Extended Query Protocol)
+- Parses SQL using the real PostgreSQL C parser (`pg_query_go`)
+- Sub-3ms latency overhead per query
+- Works with any Postgres client: psql, psycopg2, pgx, SQLAlchemy, JDBC
+- Fail-open on internal errors (won't break your app)
 
 ```bash
-# One binary. One policy file. Done.
-DATABASE_URL=postgres://user:pass@host:5432/db POLICY_FILE=./policies.yaml ./faultwall
+./faultwall --proxy --listen :5433 --upstream localhost:5432 --policies ./policies.yaml
 ```
 
----
+Agents connect to port 5433 instead of 5432. That's the only change.
 
-## How it works
+### 📊 Monitor Mode (Sidecar)
 
-**1. Agents identify themselves** via PostgreSQL's `application_name`:
-```sql
-SET application_name = 'agent:cursor-ai:mission:summarize-feedback';
+FaultWall connects to your database as a read-only sidecar, polls `pg_stat_activity`, and logs violations. Good for visibility without being in the data path.
+
+- Dashboard with agent activity, violations, cost attribution
+- Anomaly detection and alerting
+- Slack notifications
+- No query blocking (observe only)
+
+```bash
+DATABASE_URL="postgres://user:pass@localhost:5432/mydb" \
+POLICY_FILE=./policies.yaml \
+./faultwall
 ```
-
-**2. Policies define what each agent can do** (`policies.yaml`):
-```yaml
-agents:
-  cursor-ai:
-    missions:
-      summarize-feedback:
-        tables: [public.feedback, public.products]
-    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT]
-    blocked_tables: [public.users, public.payments]
-```
-
-**3. FaultWall enforces in real-time** — polls `pg_stat_activity`, parses the query, checks against the policy, terminates violating connections instantly.
-
----
-
-## Features
-
-🛡️ **Agent Firewall** — Mission-scoped policies. Agent X can only `SELECT` on tables Y, Z during this mission. Everything else is blocked.
-
-🔍 **Anomaly Detection** — Genetic algorithm-tuned baselines per tenant. Learns what "normal" looks like, flags deviations automatically.
-
-⚡ **Auto-Throttling** — Kills runaway queries, enforces per-tenant connection limits before they cascade.
-
-💰 **Cost Attribution** — "Tenant acme_corp costs $338/mo of your $360 RDS bill." Per-tenant cost breakdowns in real-time.
-
-📊 **Real-Time Dashboard** — Violations, agent connections, tenant leaderboard, anomalies, predictions. Auto-refreshes.
-
-🤖 **MCP Server** — 10 tools for AI agent control. Agents can check policies and manage themselves autonomously.
-
-🔬 **eBPF Tracing** — Kernel-level verification that agents didn't bypass the proxy. *(Enterprise tier)*
 
 ---
 
@@ -90,28 +81,36 @@ docker pull ghcr.io/shreyasxv/faultwall:latest
 
 ### Step 2: Write your policy
 
-Create `policies.yaml` — this is where you define what each agent is allowed to do:
+Create `policies.yaml`:
 
 ```yaml
-# Default: block any agent not explicitly listed
 default_policy: deny
+
+# Dangerous PostgreSQL functions blocked for ALL agents
+blocked_functions:
+  - pg_read_file
+  - pg_read_binary_file
+  - pg_ls_dir
+  - pg_execute_server_program
+  - lo_export
+  - lo_import
+  - dblink
+  - dblink_exec
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_reload_conf
+  - pg_sleep
+  - set_config
 
 agents:
   cursor-ai:
     description: "Cursor IDE agent"
-    # Never allow these operations from this agent
-    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, GRANT]
-    # Never allow access to these tables
+    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT]
     blocked_tables: [public.users, public.payments]
-    # Per-mission permissions
     missions:
       summarize-feedback:
         tables: [public.feedback, public.products]
         max_rows: 1000
-        max_query_time_ms: 5000
-      update-shipping:
-        tables: [public.orders]
-        conditions: ["UPDATE must include WHERE clause"]
 
   langchain-agent:
     description: "LangChain research agent"
@@ -121,82 +120,223 @@ agents:
         tables: [public.orders, public.products]
         max_rows: 5000
 
-# What to do with connections that don't identify as an agent
 unidentified:
-  policy: monitor    # monitor | deny | allow
+  policy: deny    # deny | monitor | allow
 ```
 
-### Step 3: Run FaultWall
+### Step 3: Run FaultWall (Proxy Mode)
 
 ```bash
-DATABASE_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" \
-POLICY_FILE=./policies.yaml \
 POLICY_ENFORCEMENT=enforce \
+./faultwall --proxy --listen :5433 --upstream localhost:5432 --policies ./policies.yaml
+```
+
+### Step 4: Point your agents at FaultWall
+
+Change the connection port from `5432` to `5433`:
+
+**Python (psycopg2):**
+```python
+conn = psycopg2.connect(
+    host="localhost", port=5433, dbname="mydb", user="myuser",
+    application_name="agent:cursor-ai:mission:summarize-feedback"
+)
+```
+
+**Node.js (pg):**
+```javascript
+const client = new Client({
+  host: "localhost", port: 5433, database: "mydb", user: "myuser",
+  application_name: "agent:cursor-ai:mission:summarize-feedback"
+});
+```
+
+**Go (pgx):**
+```go
+conn, err := pgx.Connect(ctx, "postgres://myuser@localhost:5433/mydb?application_name=agent:cursor-ai:mission:summarize-feedback")
+```
+
+**psql:**
+```bash
+psql "host=localhost port=5433 user=myuser dbname=mydb application_name=agent:cursor-ai:mission:summarize-feedback"
+```
+
+### Step 5: Verify
+
+```bash
+# This should work (agent has access to feedback table):
+psql "host=localhost port=5433 ... application_name=agent:cursor-ai:mission:summarize-feedback" \
+  -c "SELECT * FROM feedback LIMIT 5;"
+
+# This should be BLOCKED:
+psql "host=localhost port=5433 ... application_name=agent:cursor-ai:mission:summarize-feedback" \
+  -c "DROP TABLE users;"
+# ERROR: [BLOCKED by FaultWall] blocked_operation (op: DROP)
+```
+
+---
+
+## How It Works
+
+### Proxy Mode Architecture
+
+```
+┌─────────────────┐     ┌──────────────┐     ┌──────────────┐
+│   AI Agent      │────▶│  FaultWall   │────▶│  PostgreSQL   │
+│ (port 5433)     │     │  L7 Proxy    │     │  (port 5432)  │
+└─────────────────┘     └──────┬───────┘     └──────────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    │ For each query:     │
+                    │ 1. Parse SQL (AST)  │
+                    │ 2. Check policy     │
+                    │ 3. Allow or Block   │
+                    └─────────────────────┘
+```
+
+1. Agent connects to FaultWall on port 5433
+2. FaultWall reads the startup message, extracts `application_name` for agent identity
+3. Auth handshake is relayed to upstream PostgreSQL
+4. Every query (Simple or Extended protocol) is intercepted:
+   - SQL is parsed into an AST using `pg_query_go/v6` (the real PostgreSQL C parser)
+   - AST is checked against the agent's policy: operation type, tables, functions
+   - **Allowed** → query is forwarded to PostgreSQL, response relayed back
+   - **Blocked** → PostgreSQL never sees it. Client gets `ERROR: [BLOCKED by FaultWall] reason`
+5. All other wire protocol messages are forwarded transparently
+
+### Agent Identity
+
+Agents identify themselves via PostgreSQL's `application_name` parameter:
+
+```
+agent:<agent_id>:mission:<mission_id>
+```
+
+This is set in the connection string — no code changes beyond the connection config. FaultWall reads it from the startup packet at connect time.
+
+### What Gets Checked
+
+| Check | Example |
+|-------|---------|
+| **Blocked operations** | `DROP`, `TRUNCATE`, `DELETE` |
+| **Blocked tables** | `public.users`, `public.payments` |
+| **Mission scope** | Agent can only access `feedback` and `products` tables during this mission |
+| **Blocked functions** | `pg_read_file`, `dblink`, `lo_export` (17 dangerous functions blocked by default) |
+| **Unknown agents** | Agents not in the policy file are denied (when `default_policy: deny`) |
+| **Unidentified connections** | Connections without `agent:` prefix are denied/monitored per config |
+
+### Query Protocols Supported
+
+| Protocol | Coverage | Used By |
+|----------|----------|---------|
+| **Simple Query** (`Q` message) | ✅ Full inspection | `psql`, basic clients |
+| **Extended Query** (`Parse`/`Bind`/`Execute`) | ✅ Full inspection | psycopg2, pgx, SQLAlchemy, JDBC, all ORMs |
+
+---
+
+## Monitor Mode (Sidecar)
+
+For teams that want visibility without putting a proxy in the data path:
+
+```bash
+DATABASE_URL="postgres://user:pass@localhost:5432/mydb" \
+POLICY_FILE=./policies.yaml \
+POLICY_ENFORCEMENT=monitor \
 ./faultwall
 ```
 
-FaultWall starts on [http://localhost:8080](http://localhost:8080) with the dashboard, API, and policy enforcement.
+**Features:**
+- 📊 Real-time dashboard on port 8080
+- 🔍 Anomaly detection (genetic algorithm-tuned baselines)
+- ⚡ Auto-throttling (kill runaway queries)
+- 💰 Cost attribution per tenant/agent
+- 🤖 MCP server for AI agent self-monitoring
+- 📨 Slack alerting
 
-### Step 4: Configure your agents
-
-In your agent code, set the identity before running queries:
-
-```sql
-SET application_name = 'agent:cursor-ai:mission:summarize-feedback';
-```
-
-For Python (psycopg2):
-```python
-conn = psycopg2.connect(dsn, application_name="agent:cursor-ai:mission:summarize-feedback")
-```
-
-For Node.js (pg):
-```javascript
-const client = new Client({ connectionString: dsn, application_name: "agent:cursor-ai:mission:summarize-feedback" });
-```
-
-That's it. FaultWall now enforces your policies in real-time. Any agent that tries to access a table or run an operation outside its mission scope gets its connection terminated.
-
-### Step 5: Verify it works
-
-```bash
-# Check loaded policies
-curl http://localhost:8080/api/policies
-
-# See connected agents
-curl http://localhost:8080/api/firewall/agents
-
-# View violations (blocked queries)
-curl http://localhost:8080/api/violations
-```
-
-> **Requires `pg_stat_statements`** — see [setup](#enabling-pg_stat_statements) below.
+**Limitation:** Monitor mode polls `pg_stat_activity` every 10 seconds. Queries that complete faster than 10 seconds may not be detected. Use Proxy Mode for guaranteed enforcement.
 
 ---
 
 ## Dashboard
 
-The dashboard shows 6 panels, all auto-refreshing:
+Available in both modes at `http://localhost:8080`:
 
 | Panel | What you see |
 |-------|-------------|
-| **Resource Overview** | Connections, QPS, cache hit ratio, DB size |
-| **Tenant Leaderboard** | Ranked by queries, latency, rows, connections — click to expand |
-| **Top Slow Queries** | Worst queries with tenant attribution |
-| **💰 Cost per Tenant** | Monthly cost estimate with proportion bars |
-| **🔥 Active Anomalies** | Severity badges, z-scores, timestamps |
-| **🔮 Predictions** | Trend arrows, breach forecasts, R² confidence |
-| **🛡️ Throttle Status** | Per-tenant throttle indicators |
+| **Agent Connections** | Active agents, missions, connection status |
+| **Violations** | Blocked queries with agent, table, reason |
+| **Tenant Leaderboard** | Ranked by queries, latency, cost |
+| **Cost Attribution** | Per-agent/tenant cost breakdowns |
+| **Anomalies** | Statistical deviations from baseline |
+| **Predictions** | Trend forecasts and breach warnings |
 
 ---
 
-## For AI Agents (MCP)
+## Docker Compose
 
-FaultWall is **AI-native**. It exposes an [MCP server](https://modelcontextprotocol.io) so AI agents can monitor and control your database autonomously.
+```yaml
+version: "3.8"
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
 
-### Setup
+  faultwall:
+    image: ghcr.io/shreyasxv/faultwall:latest
+    command: ["./faultwall", "--proxy", "--listen", ":5433", "--upstream", "postgres:5432", "--policies", "/etc/faultwall/policies.yaml"]
+    environment:
+      POLICY_ENFORCEMENT: enforce
+    volumes:
+      - ./policies.yaml:/etc/faultwall/policies.yaml:ro
+    ports:
+      - "5433:5433"
+      - "8080:8080"
+    depends_on:
+      - postgres
+```
 
-Add to your `claude_desktop_config.json`:
+```bash
+docker compose up -d
+# Agents connect to localhost:5433
+```
+
+---
+
+## Configuration
+
+### Proxy Mode
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--proxy` | — | Enable proxy mode |
+| `--listen` | `:5433` | Proxy listen address |
+| `--upstream` | `localhost:5432` | Upstream PostgreSQL address |
+| `--policies` | `./policies.yaml` | Policy file path |
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `POLICY_ENFORCEMENT` | `monitor` | `enforce` (block) or `monitor` (log only) |
+
+### Monitor Mode (Sidecar)
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `DATABASE_URL` | **(required)** | PostgreSQL connection string |
+| `PORT` | `8080` | Dashboard port |
+| `POLICY_FILE` | `./policies.yaml` | Policy file path |
+| `POLICY_ENFORCEMENT` | `monitor` | `enforce` or `monitor` |
+| `SLACK_WEBHOOK_URL` | — | Slack webhook for alerts |
+| `THROTTLE_ENABLED` | `false` | Enable auto-throttling |
+| `RDS_HOURLY_COST` | `0.50` | Hourly DB cost for attribution |
+
+---
+
+## MCP Server (AI-Native)
+
+FaultWall exposes an MCP server so AI agents can self-monitor:
 
 ```json
 {
@@ -204,257 +344,50 @@ Add to your `claude_desktop_config.json`:
     "faultwall": {
       "command": "./faultwall",
       "args": ["--mcp"],
-      "env": {
-        "DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"
-      }
+      "env": { "DATABASE_URL": "postgres://..." }
     }
   }
 }
 ```
 
-### 10 MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_tenants` | All tenants with metrics and cost |
-| `get_tenant` | Deep-dive on one tenant |
-| `get_noisy_tenants` | Tenants above latency threshold |
-| `get_costs` | Cost attribution breakdown |
-| `get_tenant_cost` | Cost for a specific tenant |
-| `throttle_tenant` | Cancel or terminate a tenant's queries |
-| `get_health` | Overall DB health |
-| `get_throttle_events` | Recent throttle actions |
-| `get_anomalies` | Active anomalies (z-score) |
-| `get_predictions` | Trend predictions + breach forecasts |
-
-### Example
-
-> **You:** "Which tenants are noisy right now?"  
-> **Claude** calls `get_noisy_tenants` →  
-> **Claude:** "acme_corp has avg query time 234ms and is using 74% of resources ($338/mo). Recommend throttling."
+10 tools: `list_tenants`, `get_tenant`, `get_noisy_tenants`, `get_costs`, `throttle_tenant`, `get_health`, `get_anomalies`, `get_predictions`, and more.
 
 ---
 
-## Agent REST API
+## Known Limitations
 
-Higher-level endpoints with `summary` fields — designed for LLMs, not just JSON parsers.
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/agents/status` | One-call overview: health, noisy tenants, alerts |
-| `GET /api/agents/noisy` | Noisy tenants with context |
-| `GET /api/agents/tenant/{id}` | Tenant detail with plain-English summary |
-| `POST /api/agents/tenant/{id}` | Throttle a tenant |
-| `GET /api/agents/recommendation` | AI-generated suggested actions |
-| `GET /api/agents/anomalies` | Active anomalies with summaries |
-| `GET /api/agents/predictions` | Predicted breaches with summaries |
-
----
-
-## How it works
-
-```
-┌─────────────────┐         ┌──────────────┐
-│ Your Application │────────▶│  PostgreSQL   │
-└─────────────────┘         └──────┬───────┘
-                                   │
-                            ┌──────┴───────┐
-                            │  FaultWall    │  ← polls pg_stat_statements
-                            │  (sidecar)    │     every 10 seconds
-                            └──┬──┬──┬──┬──┘
-                               │  │  │  │
-              ┌────────────────┘  │  │  └────────────────┐
-              ▼                   ▼  ▼                   ▼
-        ┌──────────┐     ┌──────────┐  ┌──────────┐  ┌──────────┐
-        │Dashboard │     │ Anomaly  │  │Throttler │  │MCP Server│
-        │ :8080    │     │ Detector │  │          │  │ (AI)     │
-        └──────────┘     └──────────┘  └──────────┘  └──────────┘
-```
-
-FaultWall is a **sidecar** — it connects to your database, polls `pg_stat_activity`, and enforces agent policies in real-time. In **monitor mode**, it's read-only and logs violations. In **enforce mode**, it actively terminates connections that violate policies using `pg_cancel_backend()` / `pg_terminate_backend()`. It never modifies your schema or data.
-
-### Tenant detection
-
-FaultWall automatically detects how your app isolates tenants:
-
-| Pattern | How it detects | Accuracy |
-|---------|---------------|----------|
-| **Schema-per-tenant** | Queries contain `schema.table` | ⭐⭐⭐ Best |
-| **Row-level isolation** | `WHERE tenant_id = X` in queries | ⭐⭐ Good |
-| **Database-per-tenant** | Separate databases per tenant | ⭐⭐ Good |
-
-No config needed. Point it at your database and it figures it out.
-
----
-
-## Configuration
-
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `DATABASE_URL` | **(required)** | PostgreSQL connection string |
-| `PORT` | `8080` | HTTP server port |
-| `SLACK_WEBHOOK_URL` | — | Slack webhook for alerts |
-| `THROTTLE_ENABLED` | `false` | Enable auto-throttling |
-| `THROTTLE_MAX_QUERY_TIME_MS` | `30000` | Kill queries longer than this |
-| `THROTTLE_MAX_CONNECTIONS_PER_TENANT` | `50` | Max connections per tenant |
-| `THROTTLE_ACTION` | `cancel` | `cancel` or `terminate` |
-| `THROTTLE_GRACE_PERIOD_MS` | `5000` | Grace period before escalation |
-| `RDS_HOURLY_COST` | `0.50` | Hourly DB cost for attribution |
-| `ANOMALY_SENSITIVITY` | `2.0` | Z-score threshold (std deviations) |
-| `PREDICT_THRESHOLD_MS` | `30000` | Prediction breach threshold |
-| `HISTORY_RETENTION` | `24h` | Time-series retention |
-
----
-
-## Full API Reference
-
-<details>
-<summary><strong>Core APIs</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | Dashboard |
-| `GET /api/tenants` | Tenant leaderboard |
-| `GET /api/queries` | Top slow queries |
-| `GET /api/health` | Health check + overview |
-| `GET /api/config` | Detected isolation pattern |
-
-</details>
-
-<details>
-<summary><strong>Alerts</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/alerts` | Active alerts |
-| `GET /api/alerts/history` | Alert history |
-| `GET /api/alerts/rules` | List rules |
-| `POST /api/alerts/rules` | Add rule |
-| `DELETE /api/alerts/rules?id=X` | Remove rule |
-
-</details>
-
-<details>
-<summary><strong>Throttle</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/throttle/status` | Status + config + events |
-| `GET /api/throttle/config` | Current config |
-| `POST /api/throttle/config` | Update config |
-
-</details>
-
-<details>
-<summary><strong>Cost Attribution</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/costs` | All tenants |
-| `GET /api/costs?tenant=X` | Specific tenant |
-
-</details>
-
-<details>
-<summary><strong>Anomaly Detection & Predictions</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/anomalies` | Active anomalies + baselines |
-| `GET /api/anomalies/baseline?tenant=X` | Full baseline for tenant |
-| `GET /api/predictions` | Breach predictions |
-| `GET /api/predictions?tenant=X` | Predictions for tenant |
-
-</details>
-
-<details>
-<summary><strong>History & Export</strong></summary>
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/history?tenant=X&metric=p99_ms&period=1h` | Time-series |
-| `GET /api/history/overview?period=1h` | Overview time-series |
-| `GET /api/export/csv` | CSV export |
-| `GET /api/export/json` | JSON snapshot |
-
-</details>
-
----
-
-## Enabling pg_stat_statements
-
-```sql
--- Add to postgresql.conf:
--- shared_preload_libraries = 'pg_stat_statements'
--- Restart PostgreSQL, then:
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-```
-
-**AWS RDS/Aurora:** Enable via parameter group → reboot.  
-**Supabase/Neon:** Usually pre-enabled — just `CREATE EXTENSION`.
-
-Without it, FaultWall still works (connection + I/O metrics) but per-query data won't be available.
-
----
-
-## Self-Tuning (AutoResearch)
-
-FaultWall can optimize its own detection parameters using a genetic algorithm:
-
-```bash
-DATABASE_URL=... ./faultwall --tune
-```
-
-This runs 100 generations of parameter optimization against your workload, finding the sensitivity and window settings that maximize detection rate while minimizing false positives. No LLM needed — pure statistics.
-
----
-
-## Architecture
-
-```
-faultwall/
-├── main.go          # Server, startup, --mcp flag, --tune flag
-├── mcp.go           # MCP server (JSON-RPC 2.0 stdio)
-├── agent_api.go     # Agent REST API with summaries
-├── collector.go     # pg_stat_* metrics collection
-├── detector.go      # Tenant pattern auto-detection
-├── anomaly.go       # Statistical anomaly detection
-├── predictor.go     # Linear regression predictions
-├── throttle.go      # Auto-throttling engine
-├── cost.go          # Cost-per-tenant attribution
-├── alerting.go      # Threshold alerting
-├── slack.go         # Slack notifications
-├── history.go       # Time-series + export
-├── dashboard.go     # HTTP handlers
-├── tuner.go         # AutoResearch genetic optimizer
-└── templates/
-    └── dashboard.html
-```
-
-Single binary. Zero external dependencies beyond `lib/pq`. ~5,000 lines of Go.
+- **SSL/TLS:** Proxy mode currently denies SSL negotiation (client retries plaintext). For production with remote databases requiring TLS, use a TLS-terminating proxy in front of FaultWall.
+- **Identity spoofing:** `application_name` can be set by anyone. JWT-based identity attestation is on the roadmap.
+- **Fail-open:** If FaultWall's policy engine crashes, the query is forwarded (fail-open for availability). Configurable fail-closed mode is planned.
 
 ---
 
 ## Roadmap
 
-- [ ] eBPF kernel-level per-query CPU/IO attribution
-- [ ] SQL proxy mode (intercept queries in-flight)
-- [ ] Query plan regression detection
+- [x] Inline L7 proxy mode
+- [x] Simple Query Protocol interception
+- [x] Extended Query Protocol interception (Parse/Bind/Execute)
+- [x] Per-agent, per-mission YAML policies
+- [x] 17 blocked PostgreSQL functions by default
+- [x] Real-time dashboard
+- [x] Monitor mode (sidecar)
+- [ ] TLS/SSL passthrough
+- [ ] JWT-based agent identity
+- [ ] Connection pooling
+- [ ] Health check endpoint for proxy
+- [ ] eBPF kernel-level identity attestation (enterprise)
 - [ ] MySQL support
 - [ ] Kubernetes operator
-- [ ] Grafana plugin
 
 ---
 
 ## Contributing
 
-Contributions welcome! Open an issue or submit a PR.
-
 ```bash
 git clone https://github.com/shreyasXV/faultwall
 cd faultwall
 go build -o faultwall .
-DATABASE_URL=... ./faultwall
+go test ./...
 ```
 
 ---
@@ -467,5 +400,5 @@ MIT — see [LICENSE](LICENSE).
 
 <p align="center">
   <strong>Built by <a href="https://github.com/shreyasXV">Shreyas Shubham</a></strong><br>
-  <a href="https://twitter.com/FaultWall">@FaultWall</a>
+  <a href="https://faultwall.com">faultwall.com</a> · <a href="https://twitter.com/FaultWall">@FaultWall</a>
 </p>
