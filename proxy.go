@@ -277,6 +277,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		}
 	}()
 
+	// Track blocked Parse statements by name so we can block their Execute too
+	blockedStmts := make(map[string]bool)
+
 	for {
 		msgType, payload, err := readWireMessage(client)
 		if err != nil {
@@ -286,10 +289,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 		// Simple query protocol: type 'Q'
 		if msgType == 'Q' && len(payload) > 1 {
-			// Payload is null-terminated SQL string
 			query := string(payload[:len(payload)-1])
-
-			// Fail-open: catch panics in policy check
 			violation := safeCheckQuery(pe, identity, query)
 
 			if violation != nil && pe.GetEnforcement() == "enforce" {
@@ -299,16 +299,77 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				sendBlockedResponse(client, violation)
 				clientWriteMu.Unlock()
 				logBlocked(agentLabel, query, violation)
-				continue // do NOT forward to upstream
+				continue
 			}
 
 			if violation != nil {
-				// Monitor mode — log but still forward
 				violation.Action = "monitored"
 				pe.addViolation(*violation)
 				logMonitored(agentLabel, query, violation)
 			} else {
 				logAllowed(agentLabel, query)
+			}
+		}
+
+		// Extended query protocol: type 'P' (Parse)
+		// Parse message format: [stmt_name \0] [query \0] [param count (int16)] [param OIDs...]
+		if msgType == 'P' && len(payload) > 1 {
+			stmtName, query := extractParseMessage(payload)
+
+			if query != "" {
+				violation := safeCheckQuery(pe, identity, query)
+
+				if violation != nil && pe.GetEnforcement() == "enforce" {
+					violation.Action = "blocked"
+					pe.addViolation(*violation)
+
+					// Track this statement name as blocked
+					blockedStmts[stmtName] = true
+
+					// Don't forward Parse — drain remaining messages until Sync,
+					// then send ErrorResponse + ReadyForQuery
+					drainUntilSync(client)
+					clientWriteMu.Lock()
+					sendExtendedBlockedResponse(client, violation)
+					clientWriteMu.Unlock()
+					logBlocked(agentLabel, query, violation)
+					continue
+				}
+
+				if violation != nil {
+					violation.Action = "monitored"
+					pe.addViolation(*violation)
+					logMonitored(agentLabel, query, violation)
+				} else {
+					logAllowed(agentLabel, query)
+				}
+			}
+		}
+
+		// Extended query protocol: type 'B' (Bind)
+		// Check if this Bind references a blocked statement
+		if msgType == 'B' && len(payload) > 2 {
+			_, stmtName := extractBindNames(payload)
+			if blockedStmts[stmtName] {
+				// Skip this Bind — drain until Sync and send error
+				drainUntilSync(client)
+				clientWriteMu.Lock()
+				sendGenericBlockedResponse(client, "Statement was blocked by FaultWall policy")
+				clientWriteMu.Unlock()
+				continue
+			}
+		}
+
+		// Extended query protocol: type 'E' (Execute)
+		// Check if this Execute references a blocked portal (unnamed portal from blocked Parse)
+		if msgType == 'E' && len(payload) > 1 {
+			portalName := extractNullTerminated(payload, 0)
+			if blockedStmts[portalName] {
+				drainUntilSync(client)
+				clientWriteMu.Lock()
+				sendGenericBlockedResponse(client, "Statement was blocked by FaultWall policy")
+				clientWriteMu.Unlock()
+				continue
 			}
 		}
 
@@ -318,11 +379,123 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			return
 		}
 
+		// Close statement: clean up blocked tracking
+		if msgType == 'C' && len(payload) > 2 {
+			closeType := payload[0]
+			name := extractNullTerminated(payload, 1)
+			if closeType == 'S' {
+				delete(blockedStmts, name)
+			} else if closeType == 'P' {
+				delete(blockedStmts, name)
+			}
+		}
+
 		// Terminate
 		if msgType == 'X' {
 			return
 		}
 	}
+}
+
+// extractParseMessage extracts statement name and query from a Parse message payload.
+func extractParseMessage(payload []byte) (stmtName, query string) {
+	// Format: stmt_name \0 query \0 [param count + OIDs]
+	nameEnd := indexOf(payload, 0)
+	if nameEnd < 0 {
+		return "", ""
+	}
+	stmtName = string(payload[:nameEnd])
+
+	rest := payload[nameEnd+1:]
+	queryEnd := indexOf(rest, 0)
+	if queryEnd < 0 {
+		return stmtName, ""
+	}
+	query = string(rest[:queryEnd])
+	return stmtName, query
+}
+
+// extractBindNames extracts portal name and statement name from a Bind message payload.
+func extractBindNames(payload []byte) (portalName, stmtName string) {
+	// Format: portal_name \0 stmt_name \0 [rest...]
+	portalEnd := indexOf(payload, 0)
+	if portalEnd < 0 {
+		return "", ""
+	}
+	portalName = string(payload[:portalEnd])
+
+	rest := payload[portalEnd+1:]
+	stmtEnd := indexOf(rest, 0)
+	if stmtEnd < 0 {
+		return portalName, ""
+	}
+	stmtName = string(rest[:stmtEnd])
+	return portalName, stmtName
+}
+
+// extractNullTerminated extracts a null-terminated string starting at offset.
+func extractNullTerminated(payload []byte, offset int) string {
+	if offset >= len(payload) {
+		return ""
+	}
+	end := indexOf(payload[offset:], 0)
+	if end < 0 {
+		return ""
+	}
+	return string(payload[offset : offset+end])
+}
+
+// drainUntilSync reads and discards client messages until a Sync ('S') message is found.
+// This is needed when we block a Parse message — the client may have sent Bind/Execute/Sync
+// as a batch, and we need to consume them all before sending our error response.
+func drainUntilSync(client net.Conn) {
+	for {
+		msgType, _, err := readWireMessage(client)
+		if err != nil {
+			return
+		}
+		if msgType == 'S' { // Sync message
+			return
+		}
+	}
+}
+
+// sendExtendedBlockedResponse sends ErrorResponse + ReadyForQuery for blocked extended queries.
+func sendExtendedBlockedResponse(client net.Conn, v *PolicyViolation) {
+	detail := v.Reason
+	if v.Table != "" {
+		detail += " (table: " + v.Table + ")"
+	}
+	if v.Operation != "" {
+		detail += " (op: " + v.Operation + ")"
+	}
+
+	errResp := &pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501",
+		Message:  "[BLOCKED by FaultWall] " + detail,
+	}
+	buf, _ := errResp.Encode(nil)
+	client.Write(buf)
+
+	readyMsg := &pgproto3.ReadyForQuery{TxStatus: 'I'}
+	buf, _ = readyMsg.Encode(nil)
+	client.Write(buf)
+}
+
+// sendGenericBlockedResponse sends a generic error for blocked Bind/Execute on previously blocked statements.
+func sendGenericBlockedResponse(client net.Conn, msg string) {
+	errResp := &pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501",
+		Message:  "[BLOCKED by FaultWall] " + msg,
+	}
+	buf, _ := errResp.Encode(nil)
+	client.Write(buf)
+
+	readyMsg := &pgproto3.ReadyForQuery{TxStatus: 'I'}
+	buf, _ = readyMsg.Encode(nil)
+	client.Write(buf)
 }
 
 // safeCheckQuery calls pe.CheckQuery with panic recovery (fail-open).
