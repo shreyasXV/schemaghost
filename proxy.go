@@ -94,6 +94,21 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine) {
 
 	log.Printf("🔌 New connection: %sagent=%s%s remote=%s", colorCyan, agentLabel, colorReset, client.RemoteAddr())
 
+	// 2b. Validate auth token (before connecting to upstream)
+	if identity != nil {
+		cfg := pe.GetConfig()
+		if cfg != nil {
+			if ap, ok := cfg.Agents[identity.AgentID]; ok && ap.AuthToken != "" {
+				if identity.Token == "" || identity.Token != ap.AuthToken {
+					log.Printf("%s%s[BLOCKED]%s auth token mismatch for agent=%s",
+						colorRed, colorBold, colorReset, agentLabel)
+					sendStartupError(client, "auth token mismatch for agent: "+identity.AgentID)
+					return
+				}
+			}
+		}
+	}
+
 	// 3. Connect to upstream Postgres
 	upstream, err := net.Dial("tcp", upstreamAddr)
 	if err != nil {
@@ -495,6 +510,18 @@ func sendGenericBlockedResponse(client net.Conn, msg string) {
 
 	readyMsg := &pgproto3.ReadyForQuery{TxStatus: 'I'}
 	buf, _ = readyMsg.Encode(nil)
+	client.Write(buf)
+}
+
+// sendStartupError sends an ErrorResponse to the client before the auth handshake.
+// Used to reject connections early (e.g., auth token mismatch).
+func sendStartupError(client net.Conn, msg string) {
+	errResp := &pgproto3.ErrorResponse{
+		Severity: "FATAL",
+		Code:     "28P01", // invalid_password
+		Message:  "[BLOCKED by FaultWall] " + msg,
+	}
+	buf, _ := errResp.Encode(nil)
 	client.Write(buf)
 }
 

@@ -35,8 +35,6 @@ COPY assets/logos/ /app/assets/logos/
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
-EXPOSE 8080
-
-ENV PORT=8080
+EXPOSE 5433 8080
 
 ENTRYPOINT ["/app/faultwall"]

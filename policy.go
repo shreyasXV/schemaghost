@@ -24,6 +24,7 @@ type PolicyConfig struct {
 // AgentPolicy defines rules for a specific agent
 type AgentPolicy struct {
 	Description       string                   `yaml:"description" json:"description"`
+	AuthToken         string                   `yaml:"auth_token" json:"-"`
 	Missions          map[string]MissionPolicy `yaml:"missions" json:"missions"`
 	BlockedOperations []string                 `yaml:"blocked_operations" json:"blocked_operations"`
 	BlockedTables     []string                 `yaml:"blocked_tables" json:"blocked_tables"`

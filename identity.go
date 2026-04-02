@@ -11,6 +11,7 @@ import (
 type AgentIdentity struct {
 	AgentID   string `json:"agent_id"`
 	MissionID string `json:"mission_id"`
+	Token     string `json:"-"`
 	Raw       string `json:"raw"`
 }
 
@@ -53,7 +54,7 @@ func NewAgentTracker() *AgentTracker {
 	}
 }
 
-// ParseAgentIdentity parses "agent:<agent_id>:mission:<mission_id>" format.
+// ParseAgentIdentity parses "agent:<agent_id>:mission:<mission_id>[:token:<token>]" format.
 // Returns nil if not an agent connection.
 func ParseAgentIdentity(appName string) *AgentIdentity {
 	appName = strings.TrimSpace(appName)
@@ -61,8 +62,8 @@ func ParseAgentIdentity(appName string) *AgentIdentity {
 		return nil
 	}
 
-	parts := strings.SplitN(appName, ":", 4)
-	// Expect: ["agent", "<agent_id>", "mission", "<mission_id>"]
+	parts := strings.SplitN(appName, ":", 6)
+	// Expect: ["agent", "<agent_id>", "mission", "<mission_id>"] with optional ":token:<token>"
 	if len(parts) < 4 || parts[2] != "mission" {
 		// Partial format: agent:<id> without mission
 		if len(parts) >= 2 && parts[1] != "" {
@@ -78,11 +79,18 @@ func ParseAgentIdentity(appName string) *AgentIdentity {
 		return nil
 	}
 
-	return &AgentIdentity{
+	id := &AgentIdentity{
 		AgentID:   parts[1],
 		MissionID: parts[3],
 		Raw:       appName,
 	}
+
+	// Optional token: "agent:id:mission:mid:token:tok"
+	if len(parts) == 6 && parts[4] == "token" {
+		id.Token = parts[5]
+	}
+
+	return id
 }
 
 // Poll queries pg_stat_activity for active agent connections

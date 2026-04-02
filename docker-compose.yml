@@ -23,12 +23,31 @@ services:
       timeout: 5s
       retries: 10
 
-  faultwall:
+  faultwall-proxy:
+    build: .
+    ports:
+      - "5433:5433"
+    environment:
+      POLICY_FILE: /app/policies.yaml
+      POLICY_ENFORCEMENT: enforce
+    volumes:
+      - ./dev/demo-policies.yaml:/app/policies.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+    command: ["/app/faultwall", "--proxy", "--listen", "0.0.0.0:5433", "--upstream", "postgres:5432", "--policies", "/app/policies.yaml"]
+
+  faultwall-monitor:
     build: .
     ports:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://ghost:ghostpass@postgres:5432/faultwall_demo?sslmode=disable
+      POLICY_FILE: /app/policies.yaml
+      POLICY_ENFORCEMENT: enforce
+    volumes:
+      - ./dev/demo-policies.yaml:/app/policies.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

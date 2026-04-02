@@ -1,7 +1,7 @@
-# FaultWall Agentic Firewall — Policy Configuration
+# FaultWall Demo — Policy Configuration
 #
 # Agents identify themselves via PostgreSQL application_name:
-#   SET application_name = 'agent:<agent_id>:mission:<mission_id>';
+#   SET application_name = 'agent:<agent_id>:mission:<mission_id>:token:<token>';
 #
 # default_policy: deny | allow
 #   deny  = block any agent not explicitly listed
@@ -103,4 +103,4 @@ agents:
 
 # Unidentified connections (no agent: prefix in application_name)
 unidentified:
-  policy: monitor  # monitor | deny | allow
+  policy: monitor
