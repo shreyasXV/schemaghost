@@ -32,6 +32,15 @@ type AgentPolicy struct {
 }
 
 // MissionPolicy defines per-mission table/operation access
+// MissionPolicy defines per-mission table/operation access.
+//
+// Enforcement behavior (proxy mode):
+//   - max_rows: per-statement circuit breaker. Counts DataRow wire messages;
+//     terminates connection when exceeded. Client receives rows up to the limit
+//     plus an ErrorResponse. Resets on ReadyForQuery ('Z').
+//   - max_query_time_ms: per-statement timeout. Starts when query is forwarded
+//     to upstream; kills connection via sync.Once shutdown if exceeded.
+//     Resets on ReadyForQuery ('Z'). Per-transaction timing is not yet supported.
 type MissionPolicy struct {
 	Tables         []string `yaml:"tables" json:"tables"`
 	MaxRows        int      `yaml:"max_rows" json:"max_rows"`
