@@ -352,6 +352,59 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	return nil
 }
 
+// GetMaxRows returns the max_rows limit for an agent+mission (0 = unlimited).
+func (pe *PolicyEngine) GetMaxRows(identity *AgentIdentity) int {
+	if identity == nil {
+		return 0
+	}
+	pe.mu.RLock()
+	cfg := pe.config
+	pe.mu.RUnlock()
+	if cfg == nil {
+		return 0
+	}
+	agentPolicy, exists := cfg.Agents[identity.AgentID]
+	if !exists {
+		return 0
+	}
+	if identity.MissionID != "" {
+		if mission, ok := agentPolicy.Missions[identity.MissionID]; ok && mission.MaxRows > 0 {
+			return mission.MaxRows
+		}
+	}
+	// Check default mission
+	if mission, ok := agentPolicy.Missions["default"]; ok && mission.MaxRows > 0 {
+		return mission.MaxRows
+	}
+	return 0
+}
+
+// GetMaxQueryTimeMs returns the max_query_time_ms limit for an agent+mission (0 = unlimited).
+func (pe *PolicyEngine) GetMaxQueryTimeMs(identity *AgentIdentity) int {
+	if identity == nil {
+		return 0
+	}
+	pe.mu.RLock()
+	cfg := pe.config
+	pe.mu.RUnlock()
+	if cfg == nil {
+		return 0
+	}
+	agentPolicy, exists := cfg.Agents[identity.AgentID]
+	if !exists {
+		return 0
+	}
+	if identity.MissionID != "" {
+		if mission, ok := agentPolicy.Missions[identity.MissionID]; ok && mission.MaxQueryTimeMs > 0 {
+			return mission.MaxQueryTimeMs
+		}
+	}
+	if mission, ok := agentPolicy.Missions["default"]; ok && mission.MaxQueryTimeMs > 0 {
+		return mission.MaxQueryTimeMs
+	}
+	return 0
+}
+
 // GetEnforcement returns the current enforcement mode safely.
 func (pe *PolicyEngine) GetEnforcement() string {
 	pe.mu.RLock()

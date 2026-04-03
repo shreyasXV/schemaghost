@@ -8,6 +8,8 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgproto3/v2"
 )
@@ -272,21 +274,75 @@ func writeWireMessage(w io.Writer, msgType byte, payload []byte) error {
 func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine) {
 	var clientWriteMu sync.Mutex
 
-	// Goroutine: relay all upstream responses → client
+	// Row limit enforcement state
+	maxRows := pe.GetMaxRows(identity)
+	maxQueryTimeMs := pe.GetMaxQueryTimeMs(identity)
+	rowCount := 0
+	rowLimitExceeded := false
+
+	// Max query time enforcement
+	var queryTimer *time.Timer
+	var queryTimedOut int32 // atomic flag
+
+	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
-		buf := make([]byte, 32*1024)
 		for {
-			n, err := upstream.Read(buf)
-			if n > 0 {
-				clientWriteMu.Lock()
-				_, wErr := client.Write(buf[:n])
-				clientWriteMu.Unlock()
-				if wErr != nil {
+			msgType, payload, err := readWireMessage(upstream)
+			if err != nil {
+				client.Close()
+				return
+			}
+
+			// Count DataRow ('D') messages for max_rows enforcement
+			if msgType == 'D' && maxRows > 0 && pe.GetEnforcement() == "enforce" {
+				rowCount++
+				if rowCount > maxRows && !rowLimitExceeded {
+					rowLimitExceeded = true
+					log.Printf("%s[BLOCKED]%s %s max_rows limit exceeded (%d rows, limit: %d)",
+						colorRed, colorReset, agentLabel, rowCount, maxRows)
+					pe.addViolation(PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Reason:    fmt.Sprintf("max_rows exceeded (limit: %d)", maxRows),
+						Action:    "blocked",
+						Timestamp: time.Now(),
+					})
+					// Send ErrorResponse to client and close
+					clientWriteMu.Lock()
+					errMsg := fmt.Sprintf("FaultWall: max_rows limit (%d) exceeded for agent %s", maxRows, agentLabel)
+					sendGenericBlockedResponse(client, errMsg)
+					clientWriteMu.Unlock()
+					upstream.Close()
 					return
 				}
 			}
-			if err != nil {
-				client.Close() // signal main goroutine
+
+			// Check query timeout
+			if atomic.LoadInt32(&queryTimedOut) == 1 {
+				// Timer fired — send error and close
+				clientWriteMu.Lock()
+				errMsg := fmt.Sprintf("FaultWall: max_query_time_ms (%d) exceeded for agent %s", maxQueryTimeMs, agentLabel)
+				sendGenericBlockedResponse(client, errMsg)
+				clientWriteMu.Unlock()
+				upstream.Close()
+				return
+			}
+
+			// ReadyForQuery ('Z') = query complete, reset row counter and stop timer
+			if msgType == 'Z' {
+				rowCount = 0
+				rowLimitExceeded = false
+				if queryTimer != nil {
+					queryTimer.Stop()
+				}
+				atomic.StoreInt32(&queryTimedOut, 0)
+			}
+
+			// Forward to client
+			clientWriteMu.Lock()
+			wErr := writeWireMessage(client, msgType, payload)
+			clientWriteMu.Unlock()
+			if wErr != nil {
 				return
 			}
 		}
@@ -392,6 +448,27 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if err := writeWireMessage(upstream, msgType, payload); err != nil {
 			log.Printf("Proxy: upstream write error: %v", err)
 			return
+		}
+
+		// Start query timer for max_query_time_ms enforcement
+		if (msgType == 'Q' || msgType == 'E') && maxQueryTimeMs > 0 && pe.GetEnforcement() == "enforce" {
+			if queryTimer != nil {
+				queryTimer.Stop()
+			}
+			atomic.StoreInt32(&queryTimedOut, 0)
+			queryTimer = time.AfterFunc(time.Duration(maxQueryTimeMs)*time.Millisecond, func() {
+				atomic.StoreInt32(&queryTimedOut, 1)
+				log.Printf("%s[BLOCKED]%s %s max_query_time_ms exceeded (%dms)",
+					colorRed, colorReset, agentLabel, maxQueryTimeMs)
+				pe.addViolation(PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Reason:    fmt.Sprintf("max_query_time_ms exceeded (limit: %dms)", maxQueryTimeMs),
+					Action:    "blocked",
+					Timestamp: time.Now(),
+				})
+				upstream.Close()
+			})
 		}
 
 		// Close statement: clean up blocked tracking
