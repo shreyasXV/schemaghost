@@ -238,7 +238,7 @@ func handleMCPRequest(req jsonRPCRequest) jsonRPCResponse {
 			Result: mcpInitializeResult{
 				ProtocolVersion: "2024-11-05",
 				Capabilities:    mcpCapabilities{Tools: map[string]interface{}{}},
-				ServerInfo:      mcpServerInfo{Name: "cordon-mcp", Version: "1.0.0"},
+				ServerInfo:      mcpServerInfo{Name: "faultwall", Version: "1.0.0"},
 			},
 		}
 

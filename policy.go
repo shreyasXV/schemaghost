@@ -82,7 +82,10 @@ func NewPolicyEngine() *PolicyEngine {
 	}
 
 	if err := pe.LoadFromFile(filePath); err != nil {
-		log.Printf("Policy engine: no policies loaded (%v) — running without policy enforcement", err)
+		if enforcement == "enforce" {
+			log.Fatalf("FATAL: Policy file required in enforce mode but failed to load (%v). Refusing to start — fail-closed.", err)
+		}
+		log.Printf("Policy engine: no policies loaded (%v) — running in monitor mode without policy enforcement", err)
 		pe.config = &PolicyConfig{
 			DefaultPolicy: "allow",
 			Agents:        make(map[string]AgentPolicy),

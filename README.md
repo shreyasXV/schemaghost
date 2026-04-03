@@ -110,7 +110,6 @@ agents:
     missions:
       summarize-feedback:
         tables: [public.feedback, public.products]
-        max_rows: 1000
 
   langchain-agent:
     description: "LangChain research agent"
@@ -118,7 +117,6 @@ agents:
     missions:
       analyze-trends:
         tables: [public.orders, public.products]
-        max_rows: 5000
 
 unidentified:
   policy: deny    # deny | monitor | allow
