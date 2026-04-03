@@ -283,6 +283,15 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	// Max query time enforcement
 	var queryTimer *time.Timer
 	var queryTimedOut int32 // atomic flag
+	var connShutdown sync.Once
+	shutdownConn := func(reason string) {
+		connShutdown.Do(func() {
+			clientWriteMu.Lock()
+			sendGenericBlockedResponse(client, reason)
+			clientWriteMu.Unlock()
+			upstream.Close()
+		})
+	}
 
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
@@ -307,24 +316,14 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 						Action:    "blocked",
 						Timestamp: time.Now(),
 					})
-					// Send ErrorResponse to client and close
-					clientWriteMu.Lock()
-					errMsg := fmt.Sprintf("FaultWall: max_rows limit (%d) exceeded for agent %s", maxRows, agentLabel)
-					sendGenericBlockedResponse(client, errMsg)
-					clientWriteMu.Unlock()
-					upstream.Close()
+					shutdownConn(fmt.Sprintf("FaultWall: max_rows limit (%d) exceeded for agent %s", maxRows, agentLabel))
 					return
 				}
 			}
 
 			// Check query timeout
 			if atomic.LoadInt32(&queryTimedOut) == 1 {
-				// Timer fired — send error and close
-				clientWriteMu.Lock()
-				errMsg := fmt.Sprintf("FaultWall: max_query_time_ms (%d) exceeded for agent %s", maxQueryTimeMs, agentLabel)
-				sendGenericBlockedResponse(client, errMsg)
-				clientWriteMu.Unlock()
-				upstream.Close()
+				shutdownConn(fmt.Sprintf("FaultWall: max_query_time_ms (%d) exceeded for agent %s", maxQueryTimeMs, agentLabel))
 				return
 			}
 
@@ -467,7 +466,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					Action:    "blocked",
 					Timestamp: time.Now(),
 				})
-				upstream.Close()
+				shutdownConn(fmt.Sprintf("FaultWall: max_query_time_ms (%d) exceeded for agent %s", maxQueryTimeMs, agentLabel))
 			})
 		}
 
