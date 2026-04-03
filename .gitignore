@@ -13,11 +13,11 @@ mcp_config.json
 .DS_Store
 *.swp
 
-# Old logo variants (keep only assets/)
-logo*.svg
-logo*.png
-icon*.svg
-icon*.png
-banner*.svg
-wordmark*.svg
-wordmark*.png
+# Old logo variants in repo root (keep assets/logos/)
+/logo*.svg
+/logo*.png
+/icon*.svg
+/icon*.png
+/banner*.svg
+/wordmark*.svg
+/wordmark*.png
