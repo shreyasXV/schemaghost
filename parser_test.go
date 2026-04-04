@@ -271,6 +271,9 @@ func TestSetRoleDetection(t *testing.T) {
 	}{
 		{"SET_ROLE", "SET ROLE superuser", "SET_ROLE", "DCL"},
 		{"SET_SESSION_AUTH", "SET SESSION AUTHORIZATION postgres", "SET_ROLE", "DCL"},
+		{"RESET_ROLE", "RESET ROLE", "SET_ROLE", "DCL"},
+		{"RESET_SESSION_AUTH", "RESET session_authorization", "SET_ROLE", "DCL"},
+		{"RESET_ALL", "RESET ALL", "SET", "SESSION"},
 		{"SET_normal", "SET work_mem = '64MB'", "SET", "SESSION"},
 	}
 
