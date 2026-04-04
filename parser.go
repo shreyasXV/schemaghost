@@ -47,6 +47,23 @@ func ParseQuery(query string) *ParsedQuery {
 		}
 		op := extractOperationFromNode(stmt)
 		pq.Operations = append(pq.Operations, op)
+
+		// EXPLAIN ANALYZE actually executes the inner query — extract its
+		// operation so the policy engine can block dangerous inner statements.
+		if expl := stmt.GetExplainStmt(); expl != nil && expl.Query != nil {
+			for _, optNode := range expl.Options {
+				if dv := optNode.GetDefElem(); dv != nil {
+					if strings.EqualFold(dv.Defname, "analyze") {
+						innerOp := extractOperationFromNode(expl.Query)
+						if innerOp != "" && innerOp != "UNKNOWN" {
+							pq.Operations = append(pq.Operations, innerOp)
+						}
+						break
+					}
+				}
+			}
+		}
+
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
 	}
@@ -545,6 +562,41 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(cp.Query, tables)
 		}
 	}
+
+	// PrepareStmt — recurse into the inner query body
+	if prep := node.GetPrepareStmt(); prep != nil {
+		if prep.Query != nil {
+			extractTablesFromNode(prep.Query, tables)
+		}
+	}
+
+	// CreateTableAsStmt (CTAS) — recurse into the SELECT subquery
+	if ctas := node.GetCreateTableAsStmt(); ctas != nil {
+		if ctas.Query != nil {
+			extractTablesFromNode(ctas.Query, tables)
+		}
+	}
+
+	// ExplainStmt — recurse into the inner query
+	if expl := node.GetExplainStmt(); expl != nil {
+		if expl.Query != nil {
+			extractTablesFromNode(expl.Query, tables)
+		}
+	}
+
+	// DeclareCursorStmt — recurse into the cursor query
+	if dcur := node.GetDeclareCursorStmt(); dcur != nil {
+		if dcur.Query != nil {
+			extractTablesFromNode(dcur.Query, tables)
+		}
+	}
+
+	// TypeCast — recurse into the inner expression (catches casted function calls)
+	if tc := node.GetTypeCast(); tc != nil {
+		if tc.Arg != nil {
+			extractTablesFromNode(tc.Arg, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -688,6 +740,41 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 					extractFunctionsFromNode(item, functions)
 				}
 			}
+		}
+	}
+
+	// PrepareStmt — recurse into the inner query body
+	if prep := node.GetPrepareStmt(); prep != nil {
+		if prep.Query != nil {
+			extractFunctionsFromNode(prep.Query, functions)
+		}
+	}
+
+	// CreateTableAsStmt (CTAS) — recurse into the SELECT subquery
+	if ctas := node.GetCreateTableAsStmt(); ctas != nil {
+		if ctas.Query != nil {
+			extractFunctionsFromNode(ctas.Query, functions)
+		}
+	}
+
+	// ExplainStmt — recurse into the inner query
+	if expl := node.GetExplainStmt(); expl != nil {
+		if expl.Query != nil {
+			extractFunctionsFromNode(expl.Query, functions)
+		}
+	}
+
+	// DeclareCursorStmt — recurse into the cursor query
+	if dcur := node.GetDeclareCursorStmt(); dcur != nil {
+		if dcur.Query != nil {
+			extractFunctionsFromNode(dcur.Query, functions)
+		}
+	}
+
+	// TypeCast — recurse into the inner expression (catches casted function calls)
+	if tc := node.GetTypeCast(); tc != nil {
+		if tc.Arg != nil {
+			extractFunctionsFromNode(tc.Arg, functions)
 		}
 	}
 }

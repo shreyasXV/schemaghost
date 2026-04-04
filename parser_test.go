@@ -293,3 +293,304 @@ func TestSetRoleDetection(t *testing.T) {
 	}
 }
 
+// ── Red-team bypass regression tests (April 2026) ──
+
+func TestPrepareBodyExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"prepare_blocked_table",
+			"PREPARE stmt AS SELECT * FROM public.users",
+			[]string{"public.users"},
+			nil,
+		},
+		{
+			"prepare_blocked_function",
+			"PREPARE pwn AS SELECT pg_read_file('/etc/passwd')",
+			nil,
+			[]string{"pg_read_file"},
+		},
+		{
+			"prepare_parameterized",
+			"PREPARE stmt(int) AS SELECT * FROM public.users WHERE id = $1",
+			[]string{"public.users"},
+			nil,
+		},
+		{
+			"prepare_pg_shadow",
+			"PREPARE leak AS SELECT usename, passwd FROM pg_catalog.pg_shadow",
+			[]string{"pg_catalog.pg_shadow"},
+			nil,
+		},
+		{
+			"prepare_join",
+			"PREPARE x AS SELECT * FROM public.users JOIN public.payments USING (id)",
+			[]string{"public.users", "public.payments"},
+			nil,
+		},
+		{
+			"prepare_lo_export",
+			"PREPARE s1 AS SELECT lo_export(16389, '/tmp/dump')",
+			nil,
+			[]string{"lo_export"},
+		},
+		{
+			"prepare_set_config",
+			"PREPARE inject AS SELECT set_config('log_connections', 'off', false)",
+			nil,
+			[]string{"set_config"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestCTASExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"ctas_blocked_table",
+			"CREATE TEMP TABLE exfil AS SELECT * FROM public.users",
+			[]string{"public.users"},
+			nil,
+		},
+		{
+			"ctas_pg_shadow",
+			"CREATE TEMP TABLE exfil2 AS SELECT usename, passwd FROM pg_catalog.pg_shadow",
+			[]string{"pg_catalog.pg_shadow"},
+			nil,
+		},
+		{
+			"ctas_with_function",
+			"CREATE TEMP TABLE rce_result AS SELECT * FROM pg_catalog.pg_ls_dir('/etc') AS filename",
+			nil,
+			[]string{"pg_ls_dir"},
+		},
+		{
+			"ctas_cte",
+			"CREATE TEMP TABLE copy_leak AS WITH src AS (SELECT * FROM pg_catalog.pg_user) SELECT * FROM src",
+			[]string{"pg_catalog.pg_user"},
+			nil,
+		},
+		{
+			"ctas_lateral",
+			"CREATE TEMP TABLE lateral_leak AS SELECT f.*, u.email FROM public.feedback f, LATERAL (SELECT email FROM public.users WHERE id = f.user_id) u",
+			[]string{"public.feedback", "public.users"},
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestExplainAnalyzeExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantOps    []string
+		wantTables []string
+	}{
+		{
+			"explain_analyze_select_blocked_table",
+			"EXPLAIN ANALYZE SELECT * FROM public.users",
+			[]string{"EXPLAIN", "SELECT"},
+			[]string{"public.users"},
+		},
+		{
+			"explain_analyze_delete",
+			"EXPLAIN (ANALYZE, FORMAT JSON) DELETE FROM public.feedback RETURNING *",
+			[]string{"EXPLAIN", "DELETE"},
+			[]string{"public.feedback"},
+		},
+		{
+			"explain_analyze_update",
+			"EXPLAIN (ANALYZE, COSTS, BUFFERS, FORMAT JSON) UPDATE public.users SET email='pwned' WHERE id=1 RETURNING *",
+			[]string{"EXPLAIN", "UPDATE"},
+			[]string{"public.users"},
+		},
+		{
+			"explain_no_analyze_is_safe",
+			"EXPLAIN SELECT * FROM public.users",
+			[]string{"EXPLAIN"},
+			[]string{"public.users"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			if len(parsed.Operations) != len(tt.wantOps) {
+				t.Fatalf("operations: got %v, want %v", parsed.Operations, tt.wantOps)
+			}
+			for i, want := range tt.wantOps {
+				if parsed.Operations[i] != want {
+					t.Errorf("Operations[%d]: got %q, want %q", i, parsed.Operations[i], want)
+				}
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+
+func TestDeclareCursorExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"cursor_blocked_table",
+			"DECLARE cur CURSOR FOR SELECT * FROM public.users",
+			[]string{"public.users"},
+			nil,
+		},
+		{
+			"cursor_blocked_function",
+			"DECLARE cur2 CURSOR FOR SELECT pg_read_file('/etc/shadow')",
+			nil,
+			[]string{"pg_read_file"},
+		},
+		{
+			"cursor_payments",
+			"DECLARE secret_cur CURSOR FOR SELECT * FROM public.payments",
+			[]string{"public.payments"},
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestTypeCastFunctionExtraction(t *testing.T) {
+	parsed := ParseQuery("SELECT (pg_catalog.pg_read_file('/etc/passwd'))::text")
+	if !parsed.UsedAST {
+		t.Fatal("expected AST parsing")
+	}
+	found := false
+	for _, f := range parsed.Functions {
+		if f == "pg_read_file" || f == "pg_catalog.pg_read_file" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected pg_read_file in functions, got %v", parsed.Functions)
+	}
+}
+
