@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logos/icon.png" alt="FaultWall" width="80">
+  <img src="assets/logos/icon-v2.svg" alt="FaultWall" width="80">
   <h1 align="center">FaultWall</h1>
   <p align="center"><strong>The Agentic Data Firewall for PostgreSQL</strong></p>
   <p align="center">Identity-aware SQL enforcement for AI agents. Block rogue queries before they hit your database.</p>
