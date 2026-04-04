@@ -84,6 +84,22 @@ func extractOperationFromNode(node *pg_query.Node) string {
 		return "COPY"
 	case node.GetExplainStmt() != nil:
 		return "EXPLAIN"
+	case node.GetAlterRoleStmt() != nil:
+		return "ALTER"
+	case node.GetAlterRoleSetStmt() != nil:
+		return "ALTER"
+	case node.GetCreateRoleStmt() != nil:
+		return "CREATE"
+	case node.GetDropRoleStmt() != nil:
+		return "DROP"
+	case node.GetGrantRoleStmt() != nil:
+		return "GRANT"
+	case node.GetReassignOwnedStmt() != nil:
+		return "REASSIGN"
+	case node.GetAlterSystemStmt() != nil:
+		return "ALTER"
+	case node.GetDoStmt() != nil:
+		return "DO"
 	default:
 		return "UNKNOWN"
 	}

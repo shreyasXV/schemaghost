@@ -21,6 +21,13 @@ func TestParserAST(t *testing.T) {
 		{"DROP", "DROP TABLE public.feedback", "DROP", true, nil},
 		{"pg_read_file", "SELECT pg_read_file('/etc/passwd')", "SELECT", true, []string{"pg_read_file"}},
 		{"schema_qual", "SELECT pg_catalog.pg_sleep(10)", "SELECT", true, []string{"pg_catalog.pg_sleep", "pg_sleep"}},
+		{"COPY_TO", "COPY public.users TO STDOUT", "COPY", true, nil},
+		{"ALTER_ROLE", "ALTER ROLE admin SUPERUSER", "ALTER", true, nil},
+		{"CREATE_ROLE", "CREATE ROLE readonly LOGIN", "CREATE", true, nil},
+		{"ALTER_SYSTEM", "ALTER SYSTEM SET work_mem = '256MB'", "ALTER", true, nil},
+		{"DO_block", "DO $$ BEGIN PERFORM 1; END $$", "DO", true, nil},
+		{"REASSIGN_OWNED", "REASSIGN OWNED BY old_role TO new_role", "REASSIGN", true, nil},
+		{"unparseable", "THIS IS NOT VALID SQL AT ALL !!!", "UNKNOWN", false, nil},
 	}
 
 	for _, tt := range tests {

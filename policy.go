@@ -311,8 +311,23 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 
 		// Check "UPDATE must include WHERE clause" condition
 		for _, cond := range missionPolicy.Conditions {
-			if strings.Contains(strings.ToLower(cond), "update must include where") {
+			condLower := strings.ToLower(cond)
+			if strings.Contains(condLower, "update must include where") {
 				if strings.EqualFold(operation, "UPDATE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "condition_violated",
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			}
+			if strings.Contains(condLower, "delete must include where") {
+				if strings.EqualFold(operation, "DELETE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
 					return &PolicyViolation{
 						AgentID:   identity.AgentID,
 						MissionID: identity.MissionID,
@@ -355,6 +370,20 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 					Timestamp: time.Now(),
 				}
 			}
+		}
+	}
+
+	// Default-deny for unrecognized operations
+	if strings.EqualFold(operation, "UNKNOWN") {
+		return &PolicyViolation{
+			AgentID:   identity.AgentID,
+			MissionID: identity.MissionID,
+			Query:     truncateQuery(query),
+			Reason:    "unrecognized_operation",
+			Operation: operation,
+			PID:       pid,
+			Action:    "pending",
+			Timestamp: time.Now(),
 		}
 	}
 
@@ -496,7 +525,7 @@ func ExtractSQLOperationRegex(query string) string {
 		}
 	}
 
-	for _, op := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT"} {
+	for _, op := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "COPY", "REASSIGN", "DO"} {
 		if strings.HasPrefix(upper, op) {
 			return op
 		}

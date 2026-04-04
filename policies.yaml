@@ -47,6 +47,7 @@ agents:
         max_rows: 100
         conditions:
           - "UPDATE must include WHERE clause"
+          - "DELETE must include WHERE clause"
 
     blocked_operations:
       - DROP
@@ -55,6 +56,7 @@ agents:
       - ALTER
       - CREATE
       - GRANT
+      - COPY
 
     blocked_tables:
       - public.users
@@ -77,6 +79,7 @@ agents:
       - ALTER
       - CREATE
       - GRANT
+      - COPY
     blocked_tables:
       - public.users
       - public.payments
@@ -96,6 +99,7 @@ agents:
       - ALTER
       - CREATE
       - GRANT
+      - COPY
     blocked_tables:
       - public.users
       - public.payments
