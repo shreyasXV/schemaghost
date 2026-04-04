@@ -29,10 +29,25 @@ blocked_functions:
   - dblink_exec
   - pg_execute_server_program
 
+# Custom security profiles (optional — built-in profiles always available)
+# Built-in profiles: permissive, standard, strict
+profiles:
+  custom-readonly:
+    extends: strict
+    allowed_operations:
+      - SELECT
+      - EXPLAIN
+
 agents:
   cursor-ai:
     description: "Cursor IDE agent"
     auth_token: "cursor-secret-123"
+    profile: standard              # Built-in: permissive | standard | strict
+    # profile_overrides:           # Optional per-agent tweaks on top of profile
+    #   allow:
+    #     - COPY                   # allow COPY even though standard blocks it
+    #   block:
+    #     - MERGE                  # block MERGE even though standard allows it
     missions:
       summarize-feedback:
         tables:
@@ -45,18 +60,6 @@ agents:
         tables:
           - "public.orders"
         max_rows: 100
-        conditions:
-          - "UPDATE must include WHERE clause"
-          - "DELETE must include WHERE clause"
-
-    blocked_operations:
-      - DROP
-      - TRUNCATE
-      - DELETE
-      - ALTER
-      - CREATE
-      - GRANT
-      - COPY
 
     blocked_tables:
       - public.users

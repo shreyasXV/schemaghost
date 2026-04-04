@@ -59,9 +59,59 @@ func ParseQuery(query string) *ParsedQuery {
 	return pq
 }
 
-// extractOperationFromNode determines the SQL operation type from an AST node
+// OperationCategory maps each specific operation string to its security category.
+// Used by security profiles to resolve category-level blocking.
+var OperationCategory = map[string]string{
+	// DML
+	"SELECT": "DML", "INSERT": "DML", "UPDATE": "DML",
+	"DELETE": "DML", "MERGE": "DML", "COPY": "DML",
+	// DDL
+	"CREATE": "DDL", "ALTER": "DDL", "DROP": "DDL", "TRUNCATE": "DDL",
+	// DCL
+	"GRANT": "DCL", "REVOKE": "DCL", "ALTER_ROLE": "DCL", "CREATE_ROLE": "DCL",
+	"DROP_ROLE": "DCL", "REASSIGN_OWNED": "DCL", "DROP_OWNED": "DCL",
+	"CREATE_POLICY": "DCL", "ALTER_POLICY": "DCL",
+	"CREATE_USER_MAPPING": "DCL", "ALTER_USER_MAPPING": "DCL", "DROP_USER_MAPPING": "DCL",
+	"ALTER_DEFAULT_PRIVILEGES": "DCL",
+	// TCL
+	"TRANSACTION": "TCL",
+	// FUNCTION
+	"CREATE_FUNCTION": "FUNCTION", "ALTER_FUNCTION": "FUNCTION",
+	"CREATE_PLANG": "FUNCTION", "CALL": "FUNCTION", "DO": "FUNCTION",
+	"CREATE_EVENT_TRIGGER": "FUNCTION", "ALTER_EVENT_TRIGGER": "FUNCTION",
+	// SESSION
+	"SET": "SESSION", "SHOW": "SESSION", "DISCARD": "SESSION",
+	"PREPARE": "SESSION", "EXECUTE": "SESSION", "DEALLOCATE": "SESSION",
+	"LISTEN": "SESSION", "UNLISTEN": "SESSION", "NOTIFY": "SESSION",
+	"LOCK": "SESSION", "FETCH": "SESSION", "CLOSE_CURSOR": "SESSION",
+	"DECLARE_CURSOR": "SESSION", "LOAD": "SESSION",
+	"PLASSIGN": "SESSION", "RETURN": "SESSION",
+	// ADMIN
+	"VACUUM": "ADMIN", "REINDEX": "ADMIN", "CLUSTER": "ADMIN",
+	"CHECKPOINT": "ADMIN", "ALTER_SYSTEM": "ADMIN",
+	"ALTER_DATABASE": "ADMIN", "ALTER_DATABASE_SET": "ADMIN",
+	"ALTER_DATABASE_REFRESH_COLL": "ADMIN",
+	"REFRESH_MATVIEW": "ADMIN",
+	"CREATE_TABLESPACE": "ADMIN", "DROP_TABLESPACE": "ADMIN",
+	"CREATE_DATABASE": "ADMIN", "DROP_DATABASE": "ADMIN",
+	// EXTENSION
+	"CREATE_EXTENSION": "EXTENSION", "ALTER_EXTENSION": "EXTENSION",
+	"ALTER_EXTENSION_CONTENTS": "EXTENSION",
+	"CREATE_FDW": "EXTENSION", "ALTER_FDW": "EXTENSION",
+	"CREATE_FOREIGN_SERVER": "EXTENSION", "ALTER_FOREIGN_SERVER": "EXTENSION",
+	"IMPORT_FOREIGN_SCHEMA": "EXTENSION",
+	"CREATE_PUBLICATION": "EXTENSION", "ALTER_PUBLICATION": "EXTENSION",
+	"CREATE_SUBSCRIPTION": "EXTENSION", "ALTER_SUBSCRIPTION": "EXTENSION",
+	"DROP_SUBSCRIPTION": "EXTENSION",
+	// EXPLAIN
+	"EXPLAIN": "EXPLAIN",
+}
+
+// extractOperationFromNode determines the SQL operation type from an AST node.
+// Returns specific operation strings that map to categories via OperationCategory.
 func extractOperationFromNode(node *pg_query.Node) string {
 	switch {
+	// ── DML ──
 	case node.GetSelectStmt() != nil:
 		return "SELECT"
 	case node.GetInsertStmt() != nil:
@@ -70,36 +120,245 @@ func extractOperationFromNode(node *pg_query.Node) string {
 		return "UPDATE"
 	case node.GetDeleteStmt() != nil:
 		return "DELETE"
-	case node.GetDropStmt() != nil:
-		return "DROP"
+	case node.GetMergeStmt() != nil:
+		return "MERGE"
+	case node.GetCopyStmt() != nil:
+		return "COPY"
+
+	// ── DDL ──
 	case node.GetCreateStmt() != nil:
+		return "CREATE"
+	case node.GetCreateTableAsStmt() != nil:
+		return "CREATE"
+	case node.GetCreateSchemaStmt() != nil:
+		return "CREATE"
+	case node.GetCreateSeqStmt() != nil:
+		return "CREATE"
+	case node.GetCreateStatsStmt() != nil:
+		return "CREATE"
+	case node.GetCreateDomainStmt() != nil:
+		return "CREATE"
+	case node.GetCreateEnumStmt() != nil:
+		return "CREATE"
+	case node.GetCreateRangeStmt() != nil:
+		return "CREATE"
+	case node.GetCompositeTypeStmt() != nil:
+		return "CREATE"
+	case node.GetCreateAmStmt() != nil:
+		return "CREATE"
+	case node.GetCreateCastStmt() != nil:
+		return "CREATE"
+	case node.GetCreateConversionStmt() != nil:
+		return "CREATE"
+	case node.GetCreateOpClassStmt() != nil:
+		return "CREATE"
+	case node.GetCreateOpFamilyStmt() != nil:
+		return "CREATE"
+	case node.GetCreateTransformStmt() != nil:
+		return "CREATE"
+	case node.GetDefineStmt() != nil:
+		return "CREATE"
+	case node.GetIndexStmt() != nil:
+		return "CREATE"
+	case node.GetRuleStmt() != nil:
+		return "CREATE"
+	case node.GetCreateTrigStmt() != nil:
+		return "CREATE"
+	case node.GetViewStmt() != nil:
+		return "CREATE"
+	case node.GetCreateForeignTableStmt() != nil:
 		return "CREATE"
 	case node.GetAlterTableStmt() != nil:
 		return "ALTER"
+	case node.GetAlterDomainStmt() != nil:
+		return "ALTER"
+	case node.GetAlterEnumStmt() != nil:
+		return "ALTER"
+	case node.GetAlterSeqStmt() != nil:
+		return "ALTER"
+	case node.GetAlterStatsStmt() != nil:
+		return "ALTER"
+	case node.GetAlterCollationStmt() != nil:
+		return "ALTER"
+	case node.GetAlterTypeStmt() != nil:
+		return "ALTER"
+	case node.GetAlterOpFamilyStmt() != nil:
+		return "ALTER"
+	case node.GetAlterOperatorStmt() != nil:
+		return "ALTER"
+	case node.GetAlterObjectSchemaStmt() != nil:
+		return "ALTER"
+	case node.GetAlterObjectDependsStmt() != nil:
+		return "ALTER"
+	case node.GetAlterOwnerStmt() != nil:
+		return "ALTER"
+	case node.GetAlterTableSpaceOptionsStmt() != nil:
+		return "ALTER"
+	case node.GetAlterTableMoveAllStmt() != nil:
+		return "ALTER"
+	case node.GetAlterTsconfigurationStmt() != nil:
+		return "ALTER"
+	case node.GetAlterTsdictionaryStmt() != nil:
+		return "ALTER"
+	case node.GetRenameStmt() != nil:
+		return "ALTER"
+	case node.GetDropStmt() != nil:
+		return "DROP"
 	case node.GetTruncateStmt() != nil:
 		return "TRUNCATE"
+	case node.GetCommentStmt() != nil:
+		return "ALTER"
+	case node.GetSecLabelStmt() != nil:
+		return "ALTER"
+	case node.GetReplicaIdentityStmt() != nil:
+		return "ALTER"
+
+	// ── DCL (Access Control) ──
 	case node.GetGrantStmt() != nil:
 		return "GRANT"
-	case node.GetCopyStmt() != nil:
-		return "COPY"
-	case node.GetExplainStmt() != nil:
-		return "EXPLAIN"
-	case node.GetAlterRoleStmt() != nil:
-		return "ALTER"
-	case node.GetAlterRoleSetStmt() != nil:
-		return "ALTER"
-	case node.GetCreateRoleStmt() != nil:
-		return "CREATE"
-	case node.GetDropRoleStmt() != nil:
-		return "DROP"
 	case node.GetGrantRoleStmt() != nil:
 		return "GRANT"
+	case node.GetAlterDefaultPrivilegesStmt() != nil:
+		return "ALTER_DEFAULT_PRIVILEGES"
+	case node.GetAlterRoleStmt() != nil:
+		return "ALTER_ROLE"
+	case node.GetAlterRoleSetStmt() != nil:
+		return "ALTER_ROLE"
+	case node.GetCreateRoleStmt() != nil:
+		return "CREATE_ROLE"
+	case node.GetDropRoleStmt() != nil:
+		return "DROP_ROLE"
 	case node.GetReassignOwnedStmt() != nil:
-		return "REASSIGN"
-	case node.GetAlterSystemStmt() != nil:
-		return "ALTER"
+		return "REASSIGN_OWNED"
+	case node.GetDropOwnedStmt() != nil:
+		return "DROP_OWNED"
+	case node.GetAlterUserMappingStmt() != nil:
+		return "ALTER_USER_MAPPING"
+	case node.GetCreateUserMappingStmt() != nil:
+		return "CREATE_USER_MAPPING"
+	case node.GetDropUserMappingStmt() != nil:
+		return "DROP_USER_MAPPING"
+	case node.GetCreatePolicyStmt() != nil:
+		return "CREATE_POLICY"
+	case node.GetAlterPolicyStmt() != nil:
+		return "ALTER_POLICY"
+
+	// ── TCL (Transaction) ──
+	case node.GetTransactionStmt() != nil:
+		return "TRANSACTION"
+	case node.GetConstraintsSetStmt() != nil:
+		return "TRANSACTION"
+
+	// ── FUNCTION (Code Execution) ──
+	case node.GetCreateFunctionStmt() != nil:
+		return "CREATE_FUNCTION"
+	case node.GetAlterFunctionStmt() != nil:
+		return "ALTER_FUNCTION"
+	case node.GetCreatePlangStmt() != nil:
+		return "CREATE_PLANG"
+	case node.GetCallStmt() != nil:
+		return "CALL"
 	case node.GetDoStmt() != nil:
 		return "DO"
+	case node.GetCreateEventTrigStmt() != nil:
+		return "CREATE_EVENT_TRIGGER"
+	case node.GetAlterEventTrigStmt() != nil:
+		return "ALTER_EVENT_TRIGGER"
+
+	// ── SESSION ──
+	case node.GetVariableSetStmt() != nil:
+		return "SET"
+	case node.GetVariableShowStmt() != nil:
+		return "SHOW"
+	case node.GetDiscardStmt() != nil:
+		return "DISCARD"
+	case node.GetPrepareStmt() != nil:
+		return "PREPARE"
+	case node.GetExecuteStmt() != nil:
+		return "EXECUTE"
+	case node.GetDeallocateStmt() != nil:
+		return "DEALLOCATE"
+	case node.GetListenStmt() != nil:
+		return "LISTEN"
+	case node.GetUnlistenStmt() != nil:
+		return "UNLISTEN"
+	case node.GetNotifyStmt() != nil:
+		return "NOTIFY"
+	case node.GetLockStmt() != nil:
+		return "LOCK"
+	case node.GetFetchStmt() != nil:
+		return "FETCH"
+	case node.GetClosePortalStmt() != nil:
+		return "CLOSE_CURSOR"
+	case node.GetDeclareCursorStmt() != nil:
+		return "DECLARE_CURSOR"
+	case node.GetLoadStmt() != nil:
+		return "LOAD"
+	case node.GetPlassignStmt() != nil:
+		return "PLASSIGN"
+	case node.GetReturnStmt() != nil:
+		return "RETURN"
+
+	// ── ADMIN (Server Administration) ──
+	case node.GetVacuumStmt() != nil:
+		return "VACUUM"
+	case node.GetReindexStmt() != nil:
+		return "REINDEX"
+	case node.GetClusterStmt() != nil:
+		return "CLUSTER"
+	case node.GetCheckPointStmt() != nil:
+		return "CHECKPOINT"
+	case node.GetAlterSystemStmt() != nil:
+		return "ALTER_SYSTEM"
+	case node.GetAlterDatabaseStmt() != nil:
+		return "ALTER_DATABASE"
+	case node.GetAlterDatabaseSetStmt() != nil:
+		return "ALTER_DATABASE_SET"
+	case node.GetAlterDatabaseRefreshCollStmt() != nil:
+		return "ALTER_DATABASE_REFRESH_COLL"
+	case node.GetRefreshMatViewStmt() != nil:
+		return "REFRESH_MATVIEW"
+	case node.GetCreateTableSpaceStmt() != nil:
+		return "CREATE_TABLESPACE"
+	case node.GetDropTableSpaceStmt() != nil:
+		return "DROP_TABLESPACE"
+	case node.GetCreatedbStmt() != nil:
+		return "CREATE_DATABASE"
+	case node.GetDropdbStmt() != nil:
+		return "DROP_DATABASE"
+
+	// ── EXTENSION (Extensions / FDW / Replication) ──
+	case node.GetCreateExtensionStmt() != nil:
+		return "CREATE_EXTENSION"
+	case node.GetAlterExtensionStmt() != nil:
+		return "ALTER_EXTENSION"
+	case node.GetAlterExtensionContentsStmt() != nil:
+		return "ALTER_EXTENSION_CONTENTS"
+	case node.GetCreateFdwStmt() != nil:
+		return "CREATE_FDW"
+	case node.GetAlterFdwStmt() != nil:
+		return "ALTER_FDW"
+	case node.GetCreateForeignServerStmt() != nil:
+		return "CREATE_FOREIGN_SERVER"
+	case node.GetAlterForeignServerStmt() != nil:
+		return "ALTER_FOREIGN_SERVER"
+	case node.GetImportForeignSchemaStmt() != nil:
+		return "IMPORT_FOREIGN_SCHEMA"
+	case node.GetCreatePublicationStmt() != nil:
+		return "CREATE_PUBLICATION"
+	case node.GetAlterPublicationStmt() != nil:
+		return "ALTER_PUBLICATION"
+	case node.GetCreateSubscriptionStmt() != nil:
+		return "CREATE_SUBSCRIPTION"
+	case node.GetAlterSubscriptionStmt() != nil:
+		return "ALTER_SUBSCRIPTION"
+	case node.GetDropSubscriptionStmt() != nil:
+		return "DROP_SUBSCRIPTION"
+
+	// ── EXPLAIN ──
+	case node.GetExplainStmt() != nil:
+		return "EXPLAIN"
+
 	default:
 		return "UNKNOWN"
 	}

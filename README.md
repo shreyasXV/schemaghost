@@ -105,7 +105,7 @@ blocked_functions:
 agents:
   cursor-ai:
     description: "Cursor IDE agent"
-    blocked_operations: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT]
+    profile: standard             # use a security profile
     blocked_tables: [public.users, public.payments]
     missions:
       summarize-feedback:
@@ -113,7 +113,7 @@ agents:
 
   langchain-agent:
     description: "LangChain research agent"
-    blocked_operations: [DROP, TRUNCATE, ALTER, GRANT]
+    blocked_operations: [DROP, TRUNCATE, ALTER, GRANT]  # legacy mode still works
     missions:
       analyze-trends:
         tables: [public.orders, public.products]
@@ -303,6 +303,47 @@ docker compose up -d
 
 ---
 
+## Security Profiles
+
+Security profiles let you pick a security posture instead of manually listing operations. Three built-in profiles are available:
+
+| Profile | Posture | Blocked | Use Case |
+|---------|---------|---------|----------|
+| `permissive` | Log everything, block nothing | — | Visibility into agent behavior |
+| `standard` | Block dangerous ops | DCL, ADMIN, EXTENSION, FUNCTION categories + COPY | Agents read/write data safely |
+| `strict` | Allowlist only | Everything except SELECT, INSERT, UPDATE, DELETE, EXPLAIN, TRANSACTION | Basic CRUD only |
+
+`standard` and `strict` also enforce "DELETE must include WHERE" and "UPDATE must include WHERE" conditions.
+
+### Using Profiles
+
+```yaml
+agents:
+  my-agent:
+    profile: standard               # pick a built-in profile
+    profile_overrides:               # optional per-agent tweaks
+      allow: [COPY]                  # allow COPY even though standard blocks it
+      block: [DELETE]                # block DELETE even though standard allows it
+    blocked_tables: [public.secrets] # table rules still apply on top
+```
+
+### Custom Profiles
+
+Define custom profiles in the `profiles` section:
+
+```yaml
+profiles:
+  readonly:
+    extends: strict
+    allowed_operations: [SELECT, EXPLAIN]
+```
+
+### Backward Compatibility
+
+The existing `blocked_operations` field still works. If an agent has no `profile`, behavior is identical to before. If both `profile` and `blocked_operations` are set, the profile takes precedence.
+
+---
+
 ## Configuration
 
 ### Proxy Mode
@@ -369,6 +410,8 @@ FaultWall exposes an MCP server so AI agents can self-monitor:
 - [x] 17 blocked PostgreSQL functions by default
 - [x] Real-time dashboard
 - [x] Monitor mode (sidecar)
+- [x] Security profiles (permissive, standard, strict) with custom profile support
+- [x] Full SQL parser coverage (115 pg_query_go statement types)
 - [ ] TLS/SSL passthrough
 - [ ] JWT-based agent identity
 - [ ] Connection pooling

@@ -13,18 +13,68 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SecurityProfile defines a named security posture
+type SecurityProfile struct {
+	Name               string   // profile name
+	BlockedCategories  []string // e.g. ["DCL", "ADMIN", "EXTENSION", "FUNCTION"]
+	BlockedOperations  []string // specific ops blocked within allowed categories
+	AllowedOperations  []string // if non-empty, only these ops are allowed (allowlist mode)
+	Conditions         []string // e.g. ["DELETE must include WHERE", "UPDATE must include WHERE"]
+	AllowUnknown       bool     // whether to allow UNKNOWN operations
+}
+
+// Built-in security profiles
+var BuiltinProfiles = map[string]SecurityProfile{
+	"permissive": {
+		Name:         "permissive",
+		AllowUnknown: true,
+	},
+	"standard": {
+		Name:              "standard",
+		BlockedCategories: []string{"DCL", "ADMIN", "EXTENSION", "FUNCTION"},
+		BlockedOperations: []string{"COPY"},
+		Conditions:        []string{"DELETE must include WHERE", "UPDATE must include WHERE"},
+		AllowUnknown:      false,
+	},
+	"strict": {
+		Name:              "strict",
+		AllowedOperations: []string{"SELECT", "INSERT", "UPDATE", "DELETE", "EXPLAIN", "TRANSACTION"},
+		Conditions:        []string{"DELETE must include WHERE", "UPDATE must include WHERE"},
+		AllowUnknown:      false,
+	},
+}
+
+// ProfileOverrides allows per-agent tweaks on top of a profile
+type ProfileOverrides struct {
+	Allow []string `yaml:"allow" json:"allow"`
+	Block []string `yaml:"block" json:"block"`
+}
+
+// CustomProfileConfig is the YAML representation of a custom profile
+type CustomProfileConfig struct {
+	Extends           string   `yaml:"extends" json:"extends"`
+	AllowedOperations []string `yaml:"allowed_operations" json:"allowed_operations"`
+	BlockedCategories []string `yaml:"blocked_categories" json:"blocked_categories"`
+	BlockedOperations []string `yaml:"blocked_operations" json:"blocked_operations"`
+	Conditions        []string `yaml:"conditions" json:"conditions"`
+	AllowUnknown      *bool    `yaml:"allow_unknown" json:"allow_unknown"`
+}
+
 // PolicyConfig is the top-level policies.yaml structure
 type PolicyConfig struct {
-	DefaultPolicy    string                 `yaml:"default_policy" json:"default_policy"`
-	BlockedFunctions []string               `yaml:"blocked_functions" json:"blocked_functions"`
-	Agents           map[string]AgentPolicy `yaml:"agents" json:"agents"`
-	Unidentified     UnidentifiedPolicy     `yaml:"unidentified" json:"unidentified"`
+	DefaultPolicy    string                         `yaml:"default_policy" json:"default_policy"`
+	BlockedFunctions []string                       `yaml:"blocked_functions" json:"blocked_functions"`
+	Profiles         map[string]CustomProfileConfig `yaml:"profiles" json:"profiles"`
+	Agents           map[string]AgentPolicy         `yaml:"agents" json:"agents"`
+	Unidentified     UnidentifiedPolicy             `yaml:"unidentified" json:"unidentified"`
 }
 
 // AgentPolicy defines rules for a specific agent
 type AgentPolicy struct {
 	Description       string                   `yaml:"description" json:"description"`
 	AuthToken         string                   `yaml:"auth_token" json:"-"`
+	Profile           string                   `yaml:"profile" json:"profile"`
+	ProfileOverrides  *ProfileOverrides        `yaml:"profile_overrides" json:"profile_overrides"`
 	Missions          map[string]MissionPolicy `yaml:"missions" json:"missions"`
 	BlockedOperations []string                 `yaml:"blocked_operations" json:"blocked_operations"`
 	BlockedTables     []string                 `yaml:"blocked_tables" json:"blocked_tables"`
@@ -173,6 +223,145 @@ func (pe *PolicyEngine) addViolation(v PolicyViolation) {
 	pe.mu.Unlock()
 }
 
+// ResolveProfile resolves a profile name to a SecurityProfile, checking custom profiles
+// in the config first, then built-in profiles. Returns nil if not found.
+func ResolveProfile(name string, cfg *PolicyConfig) *SecurityProfile {
+	// Check custom profiles in config
+	if cfg != nil && cfg.Profiles != nil {
+		if custom, ok := cfg.Profiles[name]; ok {
+			return buildCustomProfile(name, custom)
+		}
+	}
+	// Check built-in profiles
+	if builtin, ok := BuiltinProfiles[name]; ok {
+		cp := builtin // copy
+		return &cp
+	}
+	return nil
+}
+
+// buildCustomProfile constructs a SecurityProfile from a CustomProfileConfig
+func buildCustomProfile(name string, custom CustomProfileConfig) *SecurityProfile {
+	profile := &SecurityProfile{Name: name}
+
+	// If extending a built-in, start from that base
+	if custom.Extends != "" {
+		if base, ok := BuiltinProfiles[custom.Extends]; ok {
+			*profile = base
+			profile.Name = name
+		}
+	}
+
+	// Override fields if specified
+	if len(custom.AllowedOperations) > 0 {
+		profile.AllowedOperations = custom.AllowedOperations
+		// Allowlist mode overrides blocked lists
+		profile.BlockedCategories = nil
+		profile.BlockedOperations = nil
+	}
+	if len(custom.BlockedCategories) > 0 {
+		profile.BlockedCategories = custom.BlockedCategories
+	}
+	if len(custom.BlockedOperations) > 0 {
+		profile.BlockedOperations = custom.BlockedOperations
+	}
+	if len(custom.Conditions) > 0 {
+		profile.Conditions = custom.Conditions
+	}
+	if custom.AllowUnknown != nil {
+		profile.AllowUnknown = *custom.AllowUnknown
+	}
+	return profile
+}
+
+// isOperationBlockedByProfile checks whether an operation is blocked by a resolved profile
+// with optional per-agent overrides applied.
+func isOperationBlockedByProfile(operation string, profile *SecurityProfile, overrides *ProfileOverrides) bool {
+	opUpper := strings.ToUpper(operation)
+
+	// Build effective allow/block sets from overrides
+	overrideAllow := make(map[string]bool)
+	overrideBlock := make(map[string]bool)
+	if overrides != nil {
+		for _, op := range overrides.Allow {
+			overrideAllow[strings.ToUpper(op)] = true
+		}
+		for _, op := range overrides.Block {
+			overrideBlock[strings.ToUpper(op)] = true
+		}
+	}
+
+	// Override block always wins
+	if overrideBlock[opUpper] {
+		return true
+	}
+	// Override allow exempts from profile blocking
+	if overrideAllow[opUpper] {
+		return false
+	}
+
+	// Allowlist mode: if AllowedOperations is set, only those are allowed
+	if len(profile.AllowedOperations) > 0 {
+		for _, allowed := range profile.AllowedOperations {
+			if strings.EqualFold(allowed, opUpper) {
+				return false
+			}
+		}
+		return true // not in allowlist = blocked
+	}
+
+	// Blocklist mode: check blocked categories, then blocked operations
+	category := OperationCategory[opUpper]
+	for _, blockedCat := range profile.BlockedCategories {
+		if strings.EqualFold(blockedCat, category) {
+			return true
+		}
+	}
+	for _, blockedOp := range profile.BlockedOperations {
+		if strings.EqualFold(blockedOp, opUpper) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkConditions checks WHERE clause conditions against a query
+func checkConditions(conditions []string, operation string, query string, identity *AgentIdentity, pid int) *PolicyViolation {
+	for _, cond := range conditions {
+		condLower := strings.ToLower(cond)
+		if strings.Contains(condLower, "update must include where") {
+			if strings.EqualFold(operation, "UPDATE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "condition_violated",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+		if strings.Contains(condLower, "delete must include where") {
+			if strings.EqualFold(operation, "DELETE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "condition_violated",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // CheckQuery evaluates a query against the loaded policies.
 // Returns nil if allowed, a PolicyViolation if blocked/flagged.
 func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid int) *PolicyViolation {
@@ -238,14 +427,69 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		return nil
 	}
 
-	// Check blocked operations (global for agent)
-	for _, blocked := range agentPolicy.BlockedOperations {
-		if strings.EqualFold(operation, blocked) {
+	// ── Profile-based operation checking ──
+	if agentPolicy.Profile != "" {
+		profile := ResolveProfile(agentPolicy.Profile, cfg)
+		if profile == nil {
+			log.Printf("Policy engine: unknown profile %q for agent %s, treating as permissive", agentPolicy.Profile, identity.AgentID)
+		} else {
+			// Check UNKNOWN handling per profile
+			if strings.EqualFold(operation, "UNKNOWN") {
+				if !profile.AllowUnknown {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "unrecognized_operation",
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+				// permissive: allow UNKNOWN, fall through
+			} else if isOperationBlockedByProfile(operation, profile, agentPolicy.ProfileOverrides) {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_operation",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+
+			// Check profile conditions
+			if v := checkConditions(profile.Conditions, operation, query, identity, pid); v != nil {
+				return v
+			}
+		}
+	} else {
+		// ── Legacy: blocked_operations list (no profile) ──
+		for _, blocked := range agentPolicy.BlockedOperations {
+			if strings.EqualFold(operation, blocked) {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_operation",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+
+		// Legacy: default-deny for UNKNOWN when no profile is set
+		if strings.EqualFold(operation, "UNKNOWN") {
 			return &PolicyViolation{
 				AgentID:   identity.AgentID,
 				MissionID: identity.MissionID,
 				Query:     truncateQuery(query),
-				Reason:    "blocked_operation",
+				Reason:    "unrecognized_operation",
 				Operation: operation,
 				PID:       pid,
 				Action:    "pending",
@@ -254,7 +498,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		}
 	}
 
-	// Check blocked tables (global for agent)
+	// Check blocked tables (global for agent — applies regardless of profile)
 	for _, table := range tables {
 		if isTableBlocked(table, agentPolicy.BlockedTables) {
 			return &PolicyViolation{
@@ -309,36 +553,10 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 			}
 		}
 
-		// Check "UPDATE must include WHERE clause" condition
-		for _, cond := range missionPolicy.Conditions {
-			condLower := strings.ToLower(cond)
-			if strings.Contains(condLower, "update must include where") {
-				if strings.EqualFold(operation, "UPDATE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
-					return &PolicyViolation{
-						AgentID:   identity.AgentID,
-						MissionID: identity.MissionID,
-						Query:     truncateQuery(query),
-						Reason:    "condition_violated",
-						Operation: operation,
-						PID:       pid,
-						Action:    "pending",
-						Timestamp: time.Now(),
-					}
-				}
-			}
-			if strings.Contains(condLower, "delete must include where") {
-				if strings.EqualFold(operation, "DELETE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
-					return &PolicyViolation{
-						AgentID:   identity.AgentID,
-						MissionID: identity.MissionID,
-						Query:     truncateQuery(query),
-						Reason:    "condition_violated",
-						Operation: operation,
-						PID:       pid,
-						Action:    "pending",
-						Timestamp: time.Now(),
-					}
-				}
+		// Check mission conditions (for agents without profiles)
+		if agentPolicy.Profile == "" {
+			if v := checkConditions(missionPolicy.Conditions, operation, query, identity, pid); v != nil {
+				return v
 			}
 		}
 	}
@@ -370,20 +588,6 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 					Timestamp: time.Now(),
 				}
 			}
-		}
-	}
-
-	// Default-deny for unrecognized operations
-	if strings.EqualFold(operation, "UNKNOWN") {
-		return &PolicyViolation{
-			AgentID:   identity.AgentID,
-			MissionID: identity.MissionID,
-			Query:     truncateQuery(query),
-			Reason:    "unrecognized_operation",
-			Operation: operation,
-			PID:       pid,
-			Action:    "pending",
-			Timestamp: time.Now(),
 		}
 	}
 
@@ -525,7 +729,7 @@ func ExtractSQLOperationRegex(query string) string {
 		}
 	}
 
-	for _, op := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "COPY", "REASSIGN", "DO"} {
+	for _, op := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE", "COPY", "REASSIGN", "DO", "CALL", "EXPLAIN", "MERGE", "VACUUM", "REINDEX", "CLUSTER", "CHECKPOINT", "REFRESH", "IMPORT", "LOAD", "SET", "SHOW", "DISCARD", "PREPARE", "EXECUTE", "DEALLOCATE", "LISTEN", "UNLISTEN", "NOTIFY", "LOCK", "FETCH", "CLOSE", "DECLARE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT"} {
 		if strings.HasPrefix(upper, op) {
 			return op
 		}
