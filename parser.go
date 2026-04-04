@@ -9,10 +9,11 @@ import (
 
 // ParsedQuery holds AST-extracted information about a SQL query
 type ParsedQuery struct {
-	Operation string
-	Tables    []string
-	Functions []string
-	UsedAST   bool
+	Operation  string   // first statement's operation (backward compat)
+	Operations []string // all operations found (multi-statement support)
+	Tables     []string
+	Functions  []string
+	UsedAST    bool
 }
 
 // ParseQuery parses a SQL query using pg_query_go AST parser.
@@ -39,17 +40,20 @@ func ParseQuery(query string) *ParsedQuery {
 	}
 
 	// Extract from all statements (handles multi-statement queries)
-	for i, rawStmt := range tree.Stmts {
+	for _, rawStmt := range tree.Stmts {
 		stmt := rawStmt.GetStmt()
 		if stmt == nil {
 			continue
 		}
-		// Operation comes from the first non-trivial statement
-		if i == 0 {
-			pq.Operation = extractOperationFromNode(stmt)
-		}
+		op := extractOperationFromNode(stmt)
+		pq.Operations = append(pq.Operations, op)
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
+	}
+
+	// First operation for backward compat
+	if len(pq.Operations) > 0 {
+		pq.Operation = pq.Operations[0]
 	}
 
 	// Deduplicate tables and functions
@@ -68,7 +72,7 @@ var OperationCategory = map[string]string{
 	// DDL
 	"CREATE": "DDL", "ALTER": "DDL", "DROP": "DDL", "TRUNCATE": "DDL",
 	// DCL
-	"GRANT": "DCL", "REVOKE": "DCL", "ALTER_ROLE": "DCL", "CREATE_ROLE": "DCL",
+	"GRANT": "DCL", "REVOKE": "DCL", "SET_ROLE": "DCL", "ALTER_ROLE": "DCL", "CREATE_ROLE": "DCL",
 	"DROP_ROLE": "DCL", "REASSIGN_OWNED": "DCL", "DROP_OWNED": "DCL",
 	"CREATE_POLICY": "DCL", "ALTER_POLICY": "DCL",
 	"CREATE_USER_MAPPING": "DCL", "ALTER_USER_MAPPING": "DCL", "DROP_USER_MAPPING": "DCL",
@@ -267,6 +271,11 @@ func extractOperationFromNode(node *pg_query.Node) string {
 
 	// ── SESSION ──
 	case node.GetVariableSetStmt() != nil:
+		vs := node.GetVariableSetStmt()
+		nameLower := strings.ToLower(vs.Name)
+		if nameLower == "role" || nameLower == "session_authorization" {
+			return "SET_ROLE"
+		}
 		return "SET"
 	case node.GetVariableShowStmt() != nil:
 		return "SHOW"

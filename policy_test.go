@@ -526,3 +526,90 @@ func TestResolveProfileCustom(t *testing.T) {
 		t.Errorf("expected AllowedOperations=[SELECT], got %v", p.AllowedOperations)
 	}
 }
+
+// ── Multi-statement bypass prevention ──
+
+func TestMultiStatementBypass(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {
+				BlockedOperations: []string{"DROP", "DELETE"},
+			},
+		},
+	})
+
+	// "SELECT 1; DROP TABLE users" should be blocked because DROP is blocked
+	v := pe.CheckQuery(id("agent1", ""), "SELECT 1; DROP TABLE users", 1)
+	if v == nil {
+		t.Error("multi-statement with DROP should be blocked")
+	} else if v.Operation != "DROP" {
+		t.Errorf("expected violation on DROP, got %s", v.Operation)
+	}
+
+	// "SELECT 1; DELETE FROM users" should be blocked because DELETE is blocked
+	v = pe.CheckQuery(id("agent1", ""), "SELECT 1; DELETE FROM users WHERE id=1", 1)
+	if v == nil {
+		t.Error("multi-statement with DELETE should be blocked")
+	}
+
+	// "SELECT 1; SELECT 2" should pass
+	v = pe.CheckQuery(id("agent1", ""), "SELECT 1; SELECT 2", 1)
+	if v != nil {
+		t.Errorf("multi-statement SELECT;SELECT should pass, got violation: %s", v.Reason)
+	}
+}
+
+func TestMultiStatementBypassWithProfile(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// "SELECT 1; VACUUM t" — standard blocks ADMIN category
+	v := pe.CheckQuery(id("agent1", ""), "SELECT 1; VACUUM t", 1)
+	if v == nil {
+		t.Error("standard profile should block multi-statement with VACUUM (ADMIN)")
+	}
+
+	// "SELECT 1; GRANT SELECT ON t TO role1" — standard blocks DCL
+	v = pe.CheckQuery(id("agent1", ""), "SELECT 1; GRANT SELECT ON t TO role1", 1)
+	if v == nil {
+		t.Error("standard profile should block multi-statement with GRANT")
+	}
+
+	// "SELECT 1; SELECT 2" should pass
+	v = pe.CheckQuery(id("agent1", ""), "SELECT 1; SELECT 2", 1)
+	if v != nil {
+		t.Errorf("multi-statement SELECT;SELECT should pass with standard, got: %s", v.Reason)
+	}
+}
+
+func TestSetRoleBlockedByStandardProfile(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// SET ROLE is DCL — standard blocks DCL
+	v := pe.CheckQuery(id("agent1", ""), "SET ROLE superuser", 1)
+	if v == nil {
+		t.Error("standard profile should block SET ROLE (DCL)")
+	}
+
+	// SET SESSION AUTHORIZATION is also DCL
+	v = pe.CheckQuery(id("agent1", ""), "SET SESSION AUTHORIZATION postgres", 1)
+	if v == nil {
+		t.Error("standard profile should block SET SESSION AUTHORIZATION (DCL)")
+	}
+
+	// Regular SET should still be allowed (SESSION category)
+	v = pe.CheckQuery(id("agent1", ""), "SET work_mem = '256MB'", 1)
+	if v != nil {
+		t.Errorf("standard profile should allow regular SET, got: %s", v.Reason)
+	}
+}

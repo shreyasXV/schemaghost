@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -24,7 +25,22 @@ const (
 	colorBold   = "\033[1m"
 )
 
-func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine) {
+func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string) {
+	var tlsConfig *tls.Config
+	if tlsCert != "" && tlsKey != "" {
+		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			log.Fatalf("Proxy: failed to load TLS certificate: %v", err)
+		}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		log.Printf("🔒 TLS enabled (cert: %s, key: %s)", tlsCert, tlsKey)
+	} else {
+		log.Printf("⚠️  TLS not configured — client connections will be plaintext")
+	}
+
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatalf("Proxy: failed to listen on %s: %v", listenAddr, err)
@@ -39,11 +55,11 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine) {
 			log.Printf("Proxy: accept error: %v", err)
 			continue
 		}
-		go handleProxyConn(conn, upstreamAddr, pe)
+		go handleProxyConn(conn, upstreamAddr, pe, tlsConfig)
 	}
 }
 
-func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine) {
+func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tlsConfig *tls.Config) {
 	defer client.Close()
 
 	// 1. Read startup message (no type byte — starts with 4-byte length)
@@ -57,10 +73,16 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine) {
 	if len(startupBuf) >= 8 {
 		proto := binary.BigEndian.Uint32(startupBuf[4:8])
 		if proto == 80877103 { // SSLRequest
-			client.Write([]byte{'N'}) // Deny SSL — client will retry plaintext
+			if tlsConfig != nil {
+				// Accept SSL — upgrade connection to TLS
+				client.Write([]byte{'S'})
+				client = tls.Server(client, tlsConfig)
+			} else {
+				client.Write([]byte{'N'}) // Deny SSL — client will retry plaintext
+			}
 			startupBuf, err = readStartupMessage(client)
 			if err != nil {
-				log.Printf("Proxy: failed to read startup after SSL denial: %v", err)
+				log.Printf("Proxy: failed to read startup after SSL negotiation: %v", err)
 				return
 			}
 		} else if proto == 80877104 { // GSSENCRequest

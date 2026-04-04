@@ -205,9 +205,88 @@ func TestOperationCategoryCompleteness(t *testing.T) {
 
 	// Pin exact count so upgrades surface new unclassified types.
 	// Update this after classifying new pg_query_go statement types.
-	const pinnedCount = 74
+	const pinnedCount = 75
 	if len(OperationCategory) != pinnedCount {
 		t.Errorf("OperationCategory count changed: got %d, pinned at %d. Classify new operations and update this constant.", len(OperationCategory), pinnedCount)
+	}
+}
+
+func TestMultiStatementOperations(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantOps    []string
+		wantFirstOp string
+	}{
+		{
+			"select_then_drop",
+			"SELECT 1; DROP TABLE users",
+			[]string{"SELECT", "DROP"},
+			"SELECT",
+		},
+		{
+			"select_then_delete",
+			"SELECT 1; DELETE FROM users",
+			[]string{"SELECT", "DELETE"},
+			"SELECT",
+		},
+		{
+			"multiple_selects",
+			"SELECT 1; SELECT 2",
+			[]string{"SELECT", "SELECT"},
+			"SELECT",
+		},
+		{
+			"single_statement",
+			"SELECT 1",
+			[]string{"SELECT"},
+			"SELECT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if parsed.Operation != tt.wantFirstOp {
+				t.Errorf("Operation: got %q, want %q", parsed.Operation, tt.wantFirstOp)
+			}
+			if len(parsed.Operations) != len(tt.wantOps) {
+				t.Fatalf("Operations count: got %d, want %d (%v)", len(parsed.Operations), len(tt.wantOps), parsed.Operations)
+			}
+			for i, op := range tt.wantOps {
+				if parsed.Operations[i] != op {
+					t.Errorf("Operations[%d]: got %q, want %q", i, parsed.Operations[i], op)
+				}
+			}
+		})
+	}
+}
+
+func TestSetRoleDetection(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		wantOp string
+		wantCat string
+	}{
+		{"SET_ROLE", "SET ROLE superuser", "SET_ROLE", "DCL"},
+		{"SET_SESSION_AUTH", "SET SESSION AUTHORIZATION postgres", "SET_ROLE", "DCL"},
+		{"SET_normal", "SET work_mem = '64MB'", "SET", "SESSION"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if parsed.Operation != tt.wantOp {
+				t.Errorf("operation: got %q, want %q", parsed.Operation, tt.wantOp)
+			}
+			cat, ok := OperationCategory[parsed.Operation]
+			if !ok {
+				t.Errorf("operation %q not in OperationCategory", parsed.Operation)
+			} else if cat != tt.wantCat {
+				t.Errorf("category: got %q, want %q", cat, tt.wantCat)
+			}
+		})
 	}
 }
 

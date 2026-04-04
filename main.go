@@ -36,6 +36,8 @@ func main() {
 	proxyListen := ":5433"
 	proxyUpstream := "localhost:5432"
 	proxyPolicies := "./policies.yaml"
+	tlsCert := os.Getenv("TLS_CERT_FILE")
+	tlsKey := os.Getenv("TLS_KEY_FILE")
 	for i, arg := range os.Args[1:] {
 		switch arg {
 		case "--mcp":
@@ -55,6 +57,14 @@ func main() {
 		case "--policies":
 			if i+1 < len(os.Args[1:])-0 {
 				proxyPolicies = os.Args[i+2]
+			}
+		case "--tls-cert":
+			if i+1 < len(os.Args[1:])-0 {
+				tlsCert = os.Args[i+2]
+			}
+		case "--tls-key":
+			if i+1 < len(os.Args[1:])-0 {
+				tlsKey = os.Args[i+2]
 			}
 		}
 	}
@@ -77,7 +87,7 @@ func main() {
 		os.Setenv("POLICY_ENFORCEMENT", "enforce")
 		policyEngine = NewPolicyEngine()
 		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
-		runProxy(proxyListen, proxyUpstream, policyEngine)
+		runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey)
 		return
 	}
 

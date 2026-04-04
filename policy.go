@@ -376,6 +376,10 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	// Parse query using AST (falls back to regex automatically)
 	parsed := ParseQuery(query)
 	operation := parsed.Operation
+	operations := parsed.Operations
+	if len(operations) == 0 {
+		operations = []string{operation}
+	}
 	tables := parsed.Tables
 	functions := parsed.Functions
 
@@ -427,73 +431,76 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		return nil
 	}
 
-	// ── Profile-based operation checking ──
+	// ── Profile-based operation checking (check ALL operations) ──
 	if agentPolicy.Profile != "" {
 		profile := ResolveProfile(agentPolicy.Profile, cfg)
 		if profile == nil {
 			log.Printf("Policy engine: unknown profile %q for agent %s, treating as permissive", agentPolicy.Profile, identity.AgentID)
 		} else {
-			// Check UNKNOWN handling per profile
-			if strings.EqualFold(operation, "UNKNOWN") {
-				if !profile.AllowUnknown {
+			for _, op := range operations {
+				// Check UNKNOWN handling per profile
+				if strings.EqualFold(op, "UNKNOWN") {
+					if !profile.AllowUnknown {
+						return &PolicyViolation{
+							AgentID:   identity.AgentID,
+							MissionID: identity.MissionID,
+							Query:     truncateQuery(query),
+							Reason:    "unrecognized_operation",
+							Operation: op,
+							PID:       pid,
+							Action:    "pending",
+							Timestamp: time.Now(),
+						}
+					}
+				} else if isOperationBlockedByProfile(op, profile, agentPolicy.ProfileOverrides) {
 					return &PolicyViolation{
 						AgentID:   identity.AgentID,
 						MissionID: identity.MissionID,
 						Query:     truncateQuery(query),
-						Reason:    "unrecognized_operation",
-						Operation: operation,
+						Reason:    "blocked_operation",
+						Operation: op,
 						PID:       pid,
 						Action:    "pending",
 						Timestamp: time.Now(),
 					}
 				}
-				// permissive: allow UNKNOWN, fall through
-			} else if isOperationBlockedByProfile(operation, profile, agentPolicy.ProfileOverrides) {
-				return &PolicyViolation{
-					AgentID:   identity.AgentID,
-					MissionID: identity.MissionID,
-					Query:     truncateQuery(query),
-					Reason:    "blocked_operation",
-					Operation: operation,
-					PID:       pid,
-					Action:    "pending",
-					Timestamp: time.Now(),
-				}
-			}
 
-			// Check profile conditions
-			if v := checkConditions(profile.Conditions, operation, query, identity, pid); v != nil {
-				return v
+				// Check profile conditions for each operation
+				if v := checkConditions(profile.Conditions, op, query, identity, pid); v != nil {
+					return v
+				}
 			}
 		}
 	} else {
-		// ── Legacy: blocked_operations list (no profile) ──
-		for _, blocked := range agentPolicy.BlockedOperations {
-			if strings.EqualFold(operation, blocked) {
+		// ── Legacy: blocked_operations list (no profile) — check ALL operations ──
+		for _, op := range operations {
+			for _, blocked := range agentPolicy.BlockedOperations {
+				if strings.EqualFold(op, blocked) {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "blocked_operation",
+						Operation: op,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			}
+
+			// Legacy: default-deny for UNKNOWN when no profile is set
+			if strings.EqualFold(op, "UNKNOWN") {
 				return &PolicyViolation{
 					AgentID:   identity.AgentID,
 					MissionID: identity.MissionID,
 					Query:     truncateQuery(query),
-					Reason:    "blocked_operation",
-					Operation: operation,
+					Reason:    "unrecognized_operation",
+					Operation: op,
 					PID:       pid,
 					Action:    "pending",
 					Timestamp: time.Now(),
 				}
-			}
-		}
-
-		// Legacy: default-deny for UNKNOWN when no profile is set
-		if strings.EqualFold(operation, "UNKNOWN") {
-			return &PolicyViolation{
-				AgentID:   identity.AgentID,
-				MissionID: identity.MissionID,
-				Query:     truncateQuery(query),
-				Reason:    "unrecognized_operation",
-				Operation: operation,
-				PID:       pid,
-				Action:    "pending",
-				Timestamp: time.Now(),
 			}
 		}
 	}
@@ -555,8 +562,10 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 
 		// Check mission conditions (for agents without profiles)
 		if agentPolicy.Profile == "" {
-			if v := checkConditions(missionPolicy.Conditions, operation, query, identity, pid); v != nil {
-				return v
+			for _, op := range operations {
+				if v := checkConditions(missionPolicy.Conditions, op, query, identity, pid); v != nil {
+					return v
+				}
 			}
 		}
 	}
