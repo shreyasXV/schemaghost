@@ -193,5 +193,21 @@ func TestOperationCategoryCompleteness(t *testing.T) {
 			t.Errorf("operation %q maps to unknown category %q", op, cat)
 		}
 	}
+
+	// Snapshot: pin the number of classified operations.
+	// If pg_query_go adds new statement types, this test fails and tells you
+	// exactly how many new operations need classifying.
+	// Update this count after adding new classifications.
+	expectedOps := len(OperationCategory)
+	if expectedOps < 50 {
+		t.Errorf("OperationCategory has only %d entries — expected 50+. Did a refactor drop entries?", expectedOps)
+	}
+
+	// Pin exact count so upgrades surface new unclassified types.
+	// Update this after classifying new pg_query_go statement types.
+	const pinnedCount = 74
+	if len(OperationCategory) != pinnedCount {
+		t.Errorf("OperationCategory count changed: got %d, pinned at %d. Classify new operations and update this constant.", len(OperationCategory), pinnedCount)
+	}
 }
 
