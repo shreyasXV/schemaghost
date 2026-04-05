@@ -594,3 +594,227 @@ func TestTypeCastFunctionExtraction(t *testing.T) {
 	}
 }
 
+// ── Red-team round 3 bypass regression tests ──
+
+func TestCaseExprSubqueryExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"case_when_exists_subquery",
+			"SELECT CASE WHEN EXISTS(SELECT 1 FROM public.users) THEN 1 ELSE 0 END",
+			[]string{"public.users"},
+			nil,
+		},
+		{
+			"case_when_function",
+			"SELECT CASE WHEN true THEN pg_sleep(5) ELSE 0 END",
+			nil,
+			[]string{"pg_sleep"},
+		},
+		{
+			"case_default_subquery",
+			"SELECT CASE WHEN false THEN 1 ELSE (SELECT count(*) FROM public.payments) END",
+			[]string{"public.payments"},
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateRulePiggybackExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantOps    []string
+		wantTables []string
+	}{
+		{
+			"rule_do_also_delete",
+			"CREATE RULE notify_delete AS ON SELECT TO public.feedback DO ALSO DELETE FROM public.users",
+			[]string{"CREATE", "DELETE"},
+			[]string{"public.feedback", "public.users"},
+		},
+		{
+			"rule_instead_drop",
+			"CREATE RULE block_select AS ON SELECT TO public.feedback DO INSTEAD NOTHING",
+			[]string{"CREATE"},
+			[]string{"public.feedback"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			if len(parsed.Operations) != len(tt.wantOps) {
+				t.Fatalf("operations: got %v, want %v", parsed.Operations, tt.wantOps)
+			}
+			for i, want := range tt.wantOps {
+				if parsed.Operations[i] != want {
+					t.Errorf("Operations[%d]: got %q, want %q", i, parsed.Operations[i], want)
+				}
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+
+func TestAlterTableDefaultSubquery(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"add_column_default_subquery",
+			"ALTER TABLE public.feedback ADD COLUMN secret text DEFAULT (SELECT password_hash FROM public.users LIMIT 1)",
+			[]string{"public.feedback", "public.users"},
+			nil,
+		},
+		{
+			"add_column_default_function",
+			"ALTER TABLE public.feedback ADD COLUMN ts timestamp DEFAULT pg_sleep(10)",
+			[]string{"public.feedback"},
+			[]string{"pg_sleep"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateTriggerFunctionExtraction(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantFuncs []string
+		wantTables []string
+	}{
+		{
+			"trigger_with_blocked_function",
+			"CREATE TRIGGER exfil_trig AFTER INSERT ON public.feedback FOR EACH ROW EXECUTE FUNCTION lo_export(1234, '/tmp/pwned')",
+			[]string{"lo_export"},
+			[]string{"public.feedback"},
+		},
+		{
+			"trigger_schema_qualified",
+			"CREATE TRIGGER t AFTER INSERT ON public.feedback FOR EACH ROW EXECUTE FUNCTION pg_catalog.pg_sleep(5)",
+			[]string{"pg_catalog.pg_sleep", "pg_sleep"},
+			[]string{"public.feedback"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+

@@ -64,6 +64,17 @@ func ParseQuery(query string) *ParsedQuery {
 			}
 		}
 
+		// CREATE RULE can piggyback additional statements (DO ALSO / INSTEAD).
+		// Extract inner operations so the policy engine can block them.
+		if rule := stmt.GetRuleStmt(); rule != nil {
+			for _, action := range rule.Actions {
+				innerOp := extractOperationFromNode(action)
+				if innerOp != "" && innerOp != "UNKNOWN" {
+					pq.Operations = append(pq.Operations, innerOp)
+				}
+			}
+		}
+
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
 	}
@@ -597,6 +608,88 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(tc.Arg, tables)
 		}
 	}
+
+	// CaseExpr — recurse into CASE branches (catches subqueries in CASE WHEN)
+	if ce := node.GetCaseExpr(); ce != nil {
+		if ce.Arg != nil {
+			extractTablesFromNode(ce.Arg, tables)
+		}
+		for _, arg := range ce.Args {
+			extractTablesFromNode(arg, tables)
+		}
+		if ce.Defresult != nil {
+			extractTablesFromNode(ce.Defresult, tables)
+		}
+	}
+
+	// CaseWhen — recurse into WHEN expr and result
+	if cw := node.GetCaseWhen(); cw != nil {
+		if cw.Expr != nil {
+			extractTablesFromNode(cw.Expr, tables)
+		}
+		if cw.Result != nil {
+			extractTablesFromNode(cw.Result, tables)
+		}
+	}
+
+	// RuleStmt — recurse into rule actions (DO ALSO / INSTEAD can contain full statements)
+	if rule := node.GetRuleStmt(); rule != nil {
+		if rule.Relation != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: rule.Relation}
+			extractTablesFromNode(rv, tables)
+		}
+		if rule.WhereClause != nil {
+			extractTablesFromNode(rule.WhereClause, tables)
+		}
+		for _, action := range rule.Actions {
+			extractTablesFromNode(action, tables)
+		}
+	}
+
+	// AlterTableStmt — recurse into commands (column defaults can contain subqueries)
+	if alt := node.GetAlterTableStmt(); alt != nil {
+		if alt.Relation != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: alt.Relation}
+			extractTablesFromNode(rv, tables)
+		}
+		for _, cmd := range alt.Cmds {
+			extractTablesFromNode(cmd, tables)
+		}
+	}
+
+	// AlterTableCmd — recurse into Def (ColumnDef with default expressions)
+	if atc := node.GetAlterTableCmd(); atc != nil {
+		if atc.Def != nil {
+			extractTablesFromNode(atc.Def, tables)
+		}
+	}
+
+	// ColumnDef — recurse into RawDefault and constraints (DEFAULT expressions)
+	if cd := node.GetColumnDef(); cd != nil {
+		if cd.RawDefault != nil {
+			extractTablesFromNode(cd.RawDefault, tables)
+		}
+		for _, constraint := range cd.Constraints {
+			if c := constraint.GetConstraint(); c != nil && c.RawExpr != nil {
+				extractTablesFromNode(c.RawExpr, tables)
+			}
+		}
+	}
+
+	// CreateTrigStmt — extract trigger's target table
+	if trig := node.GetCreateTrigStmt(); trig != nil {
+		if trig.Relation != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: trig.Relation}
+			extractTablesFromNode(rv, tables)
+		}
+		// Recurse into WHEN clause
+		if trig.WhenClause != nil {
+			extractTablesFromNode(trig.WhenClause, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -775,6 +868,86 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	if tc := node.GetTypeCast(); tc != nil {
 		if tc.Arg != nil {
 			extractFunctionsFromNode(tc.Arg, functions)
+		}
+	}
+
+	// CaseExpr — recurse into CASE branches
+	if ce := node.GetCaseExpr(); ce != nil {
+		if ce.Arg != nil {
+			extractFunctionsFromNode(ce.Arg, functions)
+		}
+		for _, arg := range ce.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+		if ce.Defresult != nil {
+			extractFunctionsFromNode(ce.Defresult, functions)
+		}
+	}
+
+	// CaseWhen — recurse into WHEN expr and result
+	if cw := node.GetCaseWhen(); cw != nil {
+		if cw.Expr != nil {
+			extractFunctionsFromNode(cw.Expr, functions)
+		}
+		if cw.Result != nil {
+			extractFunctionsFromNode(cw.Result, functions)
+		}
+	}
+
+	// RuleStmt — recurse into rule actions
+	if rule := node.GetRuleStmt(); rule != nil {
+		if rule.WhereClause != nil {
+			extractFunctionsFromNode(rule.WhereClause, functions)
+		}
+		for _, action := range rule.Actions {
+			extractFunctionsFromNode(action, functions)
+		}
+	}
+
+	// AlterTableStmt — recurse into commands
+	if alt := node.GetAlterTableStmt(); alt != nil {
+		for _, cmd := range alt.Cmds {
+			extractFunctionsFromNode(cmd, functions)
+		}
+	}
+
+	// AlterTableCmd — recurse into Def
+	if atc := node.GetAlterTableCmd(); atc != nil {
+		if atc.Def != nil {
+			extractFunctionsFromNode(atc.Def, functions)
+		}
+	}
+
+	// ColumnDef — recurse into RawDefault and constraints
+	if cd := node.GetColumnDef(); cd != nil {
+		if cd.RawDefault != nil {
+			extractFunctionsFromNode(cd.RawDefault, functions)
+		}
+		for _, constraint := range cd.Constraints {
+			if c := constraint.GetConstraint(); c != nil && c.RawExpr != nil {
+				extractFunctionsFromNode(c.RawExpr, functions)
+			}
+		}
+	}
+
+	// CreateTrigStmt — extract trigger function name
+	if trig := node.GetCreateTrigStmt(); trig != nil {
+		var parts []string
+		for _, nameNode := range trig.Funcname {
+			if s := nameNode.GetString_(); s != nil {
+				parts = append(parts, strings.ToLower(s.Sval))
+			}
+		}
+		if len(parts) > 0 {
+			fullName := strings.Join(parts, ".")
+			*functions = append(*functions, fullName)
+			if len(parts) > 1 {
+				*functions = append(*functions, parts[len(parts)-1])
+			}
+		}
+		// Recurse into WHEN clause
+		if trig.WhenClause != nil {
+			extractFunctionsFromNode(trig.WhenClause, functions)
 		}
 	}
 }
