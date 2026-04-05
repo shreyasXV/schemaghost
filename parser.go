@@ -9,11 +9,12 @@ import (
 
 // ParsedQuery holds AST-extracted information about a SQL query
 type ParsedQuery struct {
-	Operation  string   // first statement's operation (backward compat)
-	Operations []string // all operations found (multi-statement support)
-	Tables     []string
-	Functions  []string
-	UsedAST    bool
+	Operation      string   // first statement's operation (backward compat)
+	Operations     []string // all operations found (multi-statement support)
+	Tables         []string
+	Functions      []string
+	HasRegprocCast bool // true if query contains ::regproc/::regprocedure cast
+	UsedAST        bool
 }
 
 // sanitizeQuery strips null bytes, zero-width characters, and other Unicode tricks
@@ -89,6 +90,11 @@ func ParseQuery(query string) *ParsedQuery {
 
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
+
+		// Detect dangerous type casts (regproc, regprocedure, regclass)
+		if !pq.HasRegprocCast {
+			pq.HasRegprocCast = hasRegprocCast(stmt)
+		}
 	}
 
 	// First operation for backward compat
@@ -1082,6 +1088,127 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 			extractFunctionsFromNode(arg, functions)
 		}
 	}
+}
+
+// dangerousTypeNames are type names that allow function/table OID resolution
+// from string values, enabling blocklist bypasses.
+var dangerousTypeNames = map[string]bool{
+	"regproc":      true,
+	"regprocedure": true,
+	"regclass":     true,
+	"regtype":      true,
+	"regoper":      true,
+	"regoperator":  true,
+}
+
+// hasRegprocCast recursively checks if the AST contains a TypeCast to a
+// dangerous OID-resolving type (regproc, regprocedure, regclass, etc.).
+func hasRegprocCast(node *pg_query.Node) bool {
+	if node == nil {
+		return false
+	}
+
+	if tc := node.GetTypeCast(); tc != nil {
+		if tc.TypeName != nil {
+			for _, nameNode := range tc.TypeName.Names {
+				if s := nameNode.GetString_(); s != nil {
+					if dangerousTypeNames[strings.ToLower(s.Sval)] {
+						return true
+					}
+				}
+			}
+		}
+		if tc.Arg != nil && hasRegprocCast(tc.Arg) {
+			return true
+		}
+	}
+
+	// Recurse into common node types
+	if sel := node.GetSelectStmt(); sel != nil {
+		for _, target := range sel.TargetList {
+			if hasRegprocCast(target) {
+				return true
+			}
+		}
+		if sel.WhereClause != nil && hasRegprocCast(sel.WhereClause) {
+			return true
+		}
+		for _, from := range sel.FromClause {
+			if hasRegprocCast(from) {
+				return true
+			}
+		}
+	}
+	if rt := node.GetResTarget(); rt != nil {
+		if rt.Val != nil && hasRegprocCast(rt.Val) {
+			return true
+		}
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			if hasRegprocCast(arg) {
+				return true
+			}
+		}
+	}
+	if sub := node.GetSubLink(); sub != nil {
+		if hasRegprocCast(sub.Subselect) {
+			return true
+		}
+	}
+	if be := node.GetBoolExpr(); be != nil {
+		for _, arg := range be.Args {
+			if hasRegprocCast(arg) {
+				return true
+			}
+		}
+	}
+	if ae := node.GetAExpr(); ae != nil {
+		if hasRegprocCast(ae.Lexpr) || hasRegprocCast(ae.Rexpr) {
+			return true
+		}
+	}
+	if ce := node.GetCaseExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			if hasRegprocCast(arg) {
+				return true
+			}
+		}
+		if ce.Defresult != nil && hasRegprocCast(ce.Defresult) {
+			return true
+		}
+	}
+	if cw := node.GetCaseWhen(); cw != nil {
+		if hasRegprocCast(cw.Expr) || hasRegprocCast(cw.Result) {
+			return true
+		}
+	}
+	if nt := node.GetNullTest(); nt != nil {
+		if nt.Arg != nil && hasRegprocCast(nt.Arg) {
+			return true
+		}
+	}
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			if hasRegprocCast(arg) {
+				return true
+			}
+		}
+	}
+	if prep := node.GetPrepareStmt(); prep != nil {
+		if hasRegprocCast(prep.Query) {
+			return true
+		}
+	}
+	if rule := node.GetRuleStmt(); rule != nil {
+		for _, action := range rule.Actions {
+			if hasRegprocCast(action) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // stripLeadingSET removes leading SET statements to parse the actual query

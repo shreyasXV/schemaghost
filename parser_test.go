@@ -1135,3 +1135,30 @@ func TestValuesListExtraction(t *testing.T) {
 		})
 	}
 }
+
+func TestRegprocCastFlagDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantFlag bool
+	}{
+		{"regproc_basic", "SELECT 'pg_read_file'::regproc", true},
+		{"regprocedure", "SELECT 'pg_sleep(integer)'::regprocedure", true},
+		{"regclass", "SELECT 'public.users'::regclass", true},
+		{"regproc_hex", "SELECT E'\\x70675f736c656570'::regproc", true},
+		{"regproc_concat", "SELECT ('pg_' || 'sleep')::regproc", true},
+		{"regproc_in_where", "SELECT 1 FROM public.feedback WHERE 'pg_sleep'::regproc IS NOT NULL", true},
+		{"no_regproc", "SELECT * FROM public.feedback", false},
+		{"normal_cast", "SELECT '123'::integer", false},
+		{"typecast_text", "SELECT pg_read_file('/etc/passwd')::text", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if parsed.HasRegprocCast != tt.wantFlag {
+				t.Errorf("HasRegprocCast: got %v, want %v", parsed.HasRegprocCast, tt.wantFlag)
+			}
+		})
+	}
+}

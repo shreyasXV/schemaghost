@@ -640,6 +640,20 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		}
 	}
 
+	// ── Regproc cast detection (defense-in-depth: block OID-resolving casts) ──
+	if parsed.HasRegprocCast {
+		return &PolicyViolation{
+			AgentID:   identity.AgentID,
+			MissionID: identity.MissionID,
+			Query:     truncateQuery(query),
+			Reason:    "blocked_regproc_cast",
+			Operation: operation,
+			PID:       pid,
+			Action:    "pending",
+			Timestamp: time.Now(),
+		}
+	}
+
 	// ── Global function blocklist (checked last for most specific violation reason) ──
 	if len(cfg.BlockedFunctions) > 0 && len(functions) > 0 {
 		var agentAllowed map[string]bool
