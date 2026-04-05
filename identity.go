@@ -193,6 +193,28 @@ func (at *AgentTracker) RecordViolation(agentID string) {
 	}
 }
 
+// RecordQuery increments the total query count for an agent (called from proxy)
+func (at *AgentTracker) RecordQuery(agentID string) {
+	if at == nil {
+		return
+	}
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if rec, exists := at.agents[agentID]; exists {
+		rec.TotalQueries++
+		rec.LastSeen = time.Now()
+		rec.Active = true
+	} else {
+		at.agents[agentID] = &AgentRecord{
+			AgentID:      agentID,
+			Active:       true,
+			FirstSeen:    time.Now(),
+			LastSeen:     time.Now(),
+			TotalQueries: 1,
+		}
+	}
+}
+
 // GetConnections returns all currently active agent connections
 func (at *AgentTracker) GetConnections() []AgentConnection {
 	at.mu.RLock()

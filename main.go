@@ -81,13 +81,57 @@ func main() {
 		return
 	}
 
-	// Proxy mode — inline L7 query firewall, no DB needed
+	// Proxy mode — inline L7 query firewall
+	// If DATABASE_URL is set, also start the HTTP dashboard/API server
 	if proxyMode {
 		os.Setenv("POLICY_FILE", proxyPolicies)
 		os.Setenv("POLICY_ENFORCEMENT", "enforce")
 		policyEngine = NewPolicyEngine()
+		agentTracker = NewAgentTracker()
 		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
-		runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey)
+
+		// Start proxy in a goroutine so we can also run the API server
+		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey)
+
+		// If DATABASE_URL is set, start the full API server alongside the proxy
+		// If not, start a minimal API server for violations/agents/policies only
+		apiPort := os.Getenv("PORT")
+		if apiPort == "" {
+			apiPort = "8080"
+		}
+		apiBind := os.Getenv("BIND_ADDR")
+		if apiBind == "" {
+			apiBind = "0.0.0.0"
+		}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"status": "ok", "mode": "proxy"})
+		})
+		mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
+		mux.HandleFunc("/api/firewall/agents/", handleFirewallAgentQueries)
+		mux.HandleFunc("/api/policies", handlePolicies)
+		mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
+		mux.HandleFunc("/api/violations", handleViolations)
+
+		apiAddr := fmt.Sprintf("%s:%s", apiBind, apiPort)
+		log.Printf("📊 FaultWall API server on http://%s", apiAddr)
+		srv := &http.Server{Addr: apiAddr, Handler: mux}
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("API server error: %v", err)
+			}
+		}()
+
+		<-ctx.Done()
+		log.Println("Shutting down...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
 		return
 	}
 
@@ -293,7 +337,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 
 	bindAddr := os.Getenv("BIND_ADDR")
 	if bindAddr == "" {
-		bindAddr = "127.0.0.1"
+		bindAddr = "0.0.0.0"
 	}
 
 	listenAddr := fmt.Sprintf("%s:%s", bindAddr, port)

@@ -384,6 +384,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			query := string(payload[:len(payload)-1])
 			violation := safeCheckQuery(pe, identity, query)
 
+			// Track this query in the agent tracker
+			if agentTracker != nil && identity != nil {
+				agentTracker.RecordQuery(identity.AgentID)
+			}
+
 			if violation != nil && pe.GetEnforcement() == "enforce" {
 				violation.Action = "blocked"
 				pe.addViolation(*violation)
@@ -410,6 +415,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 			if query != "" {
 				violation := safeCheckQuery(pe, identity, query)
+
+				// Track this query in the agent tracker
+				if agentTracker != nil && identity != nil {
+					agentTracker.RecordQuery(identity.AgentID)
+				}
 
 				if violation != nil && pe.GetEnforcement() == "enforce" {
 					violation.Action = "blocked"

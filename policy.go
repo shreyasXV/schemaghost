@@ -215,12 +215,21 @@ func (pe *PolicyEngine) GetViolationsByAgent(agentID string) []PolicyViolation {
 
 func (pe *PolicyEngine) addViolation(v PolicyViolation) {
 	pe.mu.Lock()
+	defer pe.mu.Unlock()
 	pe.violations = append(pe.violations, v)
 	// Keep last 1000 violations
 	if len(pe.violations) > 1000 {
 		pe.violations = pe.violations[len(pe.violations)-1000:]
 	}
-	pe.mu.Unlock()
+	// Also record in agent tracker if available
+	if agentTracker != nil && v.AgentID != "" {
+		agentTracker.RecordViolation(v.AgentID)
+	}
+}
+
+// AddViolation is the exported version of addViolation (for use from proxy and external packages)
+func (pe *PolicyEngine) AddViolation(v PolicyViolation) {
+	pe.addViolation(v)
 }
 
 // ResolveProfile resolves a profile name to a SecurityProfile, checking custom profiles
@@ -705,11 +714,6 @@ func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *P
 	}
 
 	pe.addViolation(*violation)
-
-	// Update persistent agent tracker with violation count
-	if agentTracker != nil && violation.AgentID != "" {
-		agentTracker.RecordViolation(violation.AgentID)
-	}
 
 	return violation
 }
