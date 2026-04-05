@@ -854,7 +854,7 @@ func isSystemQuery(query string) bool {
 	}
 	systemPrefixes := []string{
 		"SET ", "SHOW ", "BEGIN", "COMMIT", "ROLLBACK",
-		"LISTEN", "NOTIFY", "DISCARD", "RESET", "DEALLOCATE",
+		"RESET", "DEALLOCATE",
 	}
 	for _, prefix := range systemPrefixes {
 		if strings.HasPrefix(upper, prefix) {

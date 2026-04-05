@@ -121,7 +121,7 @@ func TestParserFullCoverage(t *testing.T) {
 		{"UNLISTEN", "UNLISTEN mychannel", "UNLISTEN", "SESSION"},
 		{"NOTIFY", "NOTIFY mychannel, 'hello'", "NOTIFY", "SESSION"},
 		{"LOCK_TABLE", "LOCK TABLE t IN ACCESS EXCLUSIVE MODE", "LOCK", "SESSION"},
-		{"LOAD", "LOAD 'auto_explain'", "LOAD", "SESSION"},
+		{"LOAD", "LOAD 'auto_explain'", "LOAD", "ADMIN"},
 
 		// ── ADMIN (Server Administration) ──
 		{"VACUUM", "VACUUM t", "VACUUM", "ADMIN"},
@@ -912,6 +912,146 @@ func TestIndexStmtExtraction(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ── Red-team round 5: regproc cast detection ──
+
+func TestRegprocCastDetection(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantFuncs []string
+	}{
+		{
+			"regproc_pg_sleep",
+			"SELECT 'pg_sleep'::regproc",
+			[]string{"pg_sleep"},
+		},
+		{
+			"regprocedure_pg_sleep",
+			"SELECT 'pg_sleep(double precision)'::regprocedure",
+			[]string{"pg_sleep(double precision)"},
+		},
+		{
+			"regproc_schema_qualified",
+			"SELECT 'pg_catalog.pg_sleep'::regproc",
+			[]string{"pg_catalog.pg_sleep", "pg_sleep"},
+		},
+		{
+			"regproc_lo_export",
+			"SELECT 'lo_export'::regproc",
+			[]string{"lo_export"},
+		},
+		{
+			"regclass_not_a_function",
+			"SELECT 'pg_class'::regclass",
+			[]string{"pg_class"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestMultiStatementWithRegprocCast(t *testing.T) {
+	parsed := ParseQuery("SELECT 1; SELECT 'pg_sleep'::regproc")
+	if !parsed.UsedAST {
+		t.Fatal("expected AST parsing")
+	}
+	found := false
+	for _, f := range parsed.Functions {
+		if f == "pg_sleep" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected pg_sleep in functions from multi-statement regproc cast, got %v", parsed.Functions)
+	}
+}
+
+// ── Red-team round 5: encoding bypass detection ──
+
+func TestEncodingSanitization(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		wantOp  string
+		wantAST bool
+	}{
+		{
+			"null_byte_in_select",
+			"SEL\x00ECT 1",
+			"SELECT",
+			true,
+		},
+		{
+			"zero_width_space",
+			"SELECT\u200B 1",
+			"SELECT",
+			true,
+		},
+		{
+			"zero_width_joiner",
+			"SELECT\u200D 1",
+			"SELECT",
+			true,
+		},
+		{
+			"bom_prefix",
+			"\uFEFFSELECT 1",
+			"SELECT",
+			true,
+		},
+		{
+			"nbsp_in_query",
+			"SELECT\u00A0 1",
+			"SELECT",
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if parsed.Operation != tt.wantOp {
+				t.Errorf("operation: got %q, want %q", parsed.Operation, tt.wantOp)
+			}
+			if parsed.UsedAST != tt.wantAST {
+				t.Errorf("usedAST: got %v, want %v", parsed.UsedAST, tt.wantAST)
+			}
+		})
+	}
+}
+
+// ── Red-team round 5: LOAD category change ──
+
+func TestLoadIsAdminCategory(t *testing.T) {
+	cat, ok := OperationCategory["LOAD"]
+	if !ok {
+		t.Fatal("LOAD not found in OperationCategory")
+	}
+	if cat != "ADMIN" {
+		t.Errorf("LOAD category: got %q, want ADMIN", cat)
 	}
 }
 

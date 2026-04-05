@@ -16,9 +16,21 @@ type ParsedQuery struct {
 	UsedAST    bool
 }
 
+// sanitizeQuery strips null bytes, zero-width characters, and other Unicode tricks
+func sanitizeQuery(query string) string {
+	// Strip null bytes
+	query = strings.ReplaceAll(query, "\x00", "")
+	// Strip zero-width characters
+	for _, r := range []string{"\u200B", "\u200C", "\u200D", "\uFEFF", "\u00A0"} {
+		query = strings.ReplaceAll(query, r, "")
+	}
+	return strings.TrimSpace(query)
+}
+
 // ParseQuery parses a SQL query using pg_query_go AST parser.
 // Falls back to regex-based parsing if AST parsing fails.
 func ParseQuery(query string) *ParsedQuery {
+	query = sanitizeQuery(query)
 	// Strip leading SET statements before parsing
 	normalized := stripLeadingSET(query)
 
@@ -116,7 +128,7 @@ var OperationCategory = map[string]string{
 	"PREPARE": "SESSION", "EXECUTE": "SESSION", "DEALLOCATE": "SESSION",
 	"LISTEN": "SESSION", "UNLISTEN": "SESSION", "NOTIFY": "SESSION",
 	"LOCK": "SESSION", "FETCH": "SESSION", "CLOSE_CURSOR": "SESSION",
-	"DECLARE_CURSOR": "SESSION", "LOAD": "SESSION",
+	"DECLARE_CURSOR": "SESSION", "LOAD": "ADMIN",
 	"PLASSIGN": "SESSION", "RETURN": "SESSION",
 	// ADMIN
 	"VACUUM": "ADMIN", "REINDEX": "ADMIN", "CLUSTER": "ADMIN",
@@ -910,6 +922,32 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 
 	// TypeCast — recurse into the inner expression (catches casted function calls)
 	if tc := node.GetTypeCast(); tc != nil {
+		// Check if casting to regproc/regprocedure — this invokes the function
+		if tc.TypeName != nil {
+			for _, n := range tc.TypeName.Names {
+				if s := n.GetString_(); s != nil {
+					name := strings.ToLower(s.Sval)
+					if name == "regproc" || name == "regprocedure" || name == "regclass" || name == "regtype" {
+						// The string constant IS the function/type name being referenced
+						if tc.Arg != nil {
+							if aconst := tc.Arg.GetAConst(); aconst != nil {
+								if sval := aconst.GetSval(); sval != nil {
+									fnName := strings.ToLower(sval.Sval)
+									// Strip schema prefix if present
+									if idx := strings.LastIndex(fnName, "."); idx >= 0 {
+										*functions = append(*functions, fnName)
+										*functions = append(*functions, fnName[idx+1:])
+									} else {
+										*functions = append(*functions, fnName)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Recurse (existing)
 		if tc.Arg != nil {
 			extractFunctionsFromNode(tc.Arg, functions)
 		}
