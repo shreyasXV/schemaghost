@@ -12,47 +12,113 @@ default_policy: deny
 # Global function blocklist — deny-by-default for dangerous PG functions.
 # These are blocked for ALL agents unless explicitly allowed per-agent.
 blocked_functions:
-  # Sleep / process control
+  # ── Sleep / Process Control ──
   - pg_sleep
+  - pg_sleep_for
+  - pg_sleep_until
   - pg_terminate_backend
   - pg_cancel_backend
   - pg_reload_conf
   - pg_rotate_logfile
-  # Large object manipulation
-  - lo_export
-  - lo_import
-  - lo_unlink
-  - lo_from_bytea
-  - lo_get
-  - lo_put
-  - lo_create
-  # Filesystem access
+  - pg_promote
+
+  # ── Large Object Manipulation ──
+  - lo_*
+
+  # ── Filesystem Access ──
   - pg_read_file
   - pg_read_binary_file
   - pg_ls_dir
+  - pg_ls_waldir
+  - pg_ls_logdir
+  - pg_ls_tmpdir
+  - pg_ls_archive_statusdir
   - pg_stat_file
+  - pg_relation_filepath
   - pg_execute_server_program
-  # Config manipulation
+
+  # ── Config / Settings ──
   - set_config
-  # Remote connections
-  - dblink
-  - dblink_exec
-  - dblink_connect
-  - dblink_send_query
-  # Dynamic SQL execution (query string → server-side exec)
-  - query_to_xml
-  - query_to_xml_and_xmlschema
-  - table_to_xml
-  - table_to_xmlschema
-  - table_to_xml_and_xmlschema
-  - schema_to_xml
-  - schema_to_xmlschema
-  - schema_to_xml_and_xmlschema
-  - database_to_xml
-  - database_to_xmlschema
-  - database_to_xml_and_xmlschema
+  - current_setting
+
+  # ── Remote Connections ──
+  - dblink*
+
+  # ── Dynamic SQL / XML execution ──
+  - query_to_xml*
+  - table_to_xml*
+  - schema_to_xml*
+  - database_to_xml*
   - xpath_table
   - ts_stat
+
+  # ── WAL / Replication (admin-only) ──
+  - pg_switch_wal
+  - pg_current_wal_*
+  - pg_walfile_name*
+  - pg_wal_replay_*
+  - pg_start_backup
+  - pg_stop_backup
+  - pg_create_restore_point
+  - pg_export_snapshot
+  - pg_log_standby_snapshot
+  - txid_*
+
+  # ── Server Info Reconnaissance ──
+  - version
+  - pg_postmaster_start_time
+  - pg_conf_load_time
+  - pg_backend_pid
+  - pg_is_in_recovery
+  - pg_is_wal_replay_paused
+  - inet_server_addr
+  - inet_server_port
+  - inet_client_addr
+  - inet_client_port
+
+  # ── Internal Stats (bulk prefix) ──
+  - pg_stat_get_*
+
+  # ── Privilege Check Functions (info leak) ──
+  - has_table_privilege
+  - has_column_privilege
+  - has_database_privilege
+  - has_function_privilege
+  - has_schema_privilege
+  - has_server_privilege
+  - has_tablespace_privilege
+  - has_type_privilege
+  - has_sequence_privilege
+  - has_any_column_privilege
+  - has_foreign_data_wrapper_privilege
+  - pg_has_role
+
+  # ── Advisory Locks (DoS vector) ──
+  - pg_advisory_lock*
+  - pg_try_advisory_lock*
+
+  # ── Size / Recon ──
+  - pg_relation_size
+  - pg_table_size
+  - pg_total_relation_size
+  - pg_database_size
+  - pg_tablespace_size
+  - pg_indexes_size
+  - pg_column_size
+
+  # ── Resource Exhaustion ──
+  - generate_series
+  - repeat
+
+  # ── JSON/record manipulation (can bypass type restrictions) ──
+  - json_populate_record*
+  - jsonb_populate_record*
+
+  # ── Metadata / Type inspection ──
+  - obj_description
+  - col_description
+  - shobj_description
+  - pg_typeof
 
 # Custom security profiles (optional — built-in profiles always available)
 # Built-in profiles: permissive, standard, strict

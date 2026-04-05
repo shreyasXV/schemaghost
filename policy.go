@@ -32,7 +32,7 @@ var BuiltinProfiles = map[string]SecurityProfile{
 	"standard": {
 		Name:              "standard",
 		BlockedCategories: []string{"DCL", "ADMIN", "EXTENSION", "FUNCTION"},
-		BlockedOperations: []string{"COPY"},
+		BlockedOperations: []string{"COPY", "NOTIFY", "LISTEN", "DISCARD"},
 		Conditions:        []string{"DELETE must include WHERE", "UPDATE must include WHERE"},
 		AllowUnknown:      false,
 	},
@@ -335,12 +335,33 @@ func isOperationBlockedByProfile(operation string, profile *SecurityProfile, ove
 	return false
 }
 
+// hasTrivialWhere checks if the WHERE clause is trivially true (e.g. WHERE 1=1, WHERE true)
+func hasTrivialWhere(query string) bool {
+	upper := strings.ToUpper(query)
+	whereIdx := strings.Index(upper, "WHERE")
+	if whereIdx < 0 {
+		return false
+	}
+	whereClause := strings.TrimSpace(upper[whereIdx+5:])
+	trivialPatterns := []string{
+		"1=1", "1 = 1", "TRUE", "'1'='1'", "'A'='A'",
+		"1<>0", "1 <> 0", "1!=0", "1 != 0",
+		"NOT FALSE", "1 > 0", "1 >= 1", "0 < 1", "0 <= 1",
+	}
+	for _, pattern := range trivialPatterns {
+		if strings.HasPrefix(whereClause, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkConditions checks WHERE clause conditions against a query
 func checkConditions(conditions []string, operation string, query string, identity *AgentIdentity, pid int) *PolicyViolation {
 	for _, cond := range conditions {
 		condLower := strings.ToLower(cond)
 		if strings.Contains(condLower, "update must include where") {
-			if strings.EqualFold(operation, "UPDATE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+			if strings.EqualFold(operation, "UPDATE") && (!strings.Contains(strings.ToUpper(query), "WHERE") || hasTrivialWhere(query)) {
 				return &PolicyViolation{
 					AgentID:   identity.AgentID,
 					MissionID: identity.MissionID,
@@ -354,7 +375,7 @@ func checkConditions(conditions []string, operation string, query string, identi
 			}
 		}
 		if strings.Contains(condLower, "delete must include where") {
-			if strings.EqualFold(operation, "DELETE") && !strings.Contains(strings.ToUpper(query), "WHERE") {
+			if strings.EqualFold(operation, "DELETE") && (!strings.Contains(strings.ToUpper(query), "WHERE") || hasTrivialWhere(query)) {
 				return &PolicyViolation{
 					AgentID:   identity.AgentID,
 					MissionID: identity.MissionID,
@@ -854,16 +875,26 @@ func truncateQuery(q string) string {
 	return q
 }
 
-// isFunctionBlocked checks if a function name is in the blocklist
+// isFunctionBlocked checks if a function name is in the blocklist.
+// Supports wildcard prefix matching: "lo_*" matches "lo_export", "lo_import", etc.
 func isFunctionBlocked(fn string, blockedList []string) bool {
+	fnLower := strings.ToLower(fn)
+	// Strip schema prefix for matching (pg_catalog.pg_sleep → pg_sleep)
+	bareName := fnLower
+	if idx := strings.LastIndex(fnLower, "."); idx >= 0 {
+		bareName = fnLower[idx+1:]
+	}
 	for _, blocked := range blockedList {
-		if strings.EqualFold(fn, blocked) {
-			return true
-		}
-		// Also match schema-qualified: "pg_catalog.pg_sleep" matches "pg_sleep"
-		if strings.Contains(fn, ".") {
-			parts := strings.SplitN(fn, ".", 2)
-			if strings.EqualFold(parts[len(parts)-1], blocked) {
+		blockedLower := strings.ToLower(blocked)
+		if strings.HasSuffix(blockedLower, "*") {
+			// Wildcard prefix match: "pg_stat_get_*" matches "pg_stat_get_activity"
+			prefix := strings.TrimSuffix(blockedLower, "*")
+			if strings.HasPrefix(fnLower, prefix) || strings.HasPrefix(bareName, prefix) {
+				return true
+			}
+		} else {
+			// Exact match (existing behavior)
+			if fnLower == blockedLower || bareName == blockedLower {
 				return true
 			}
 		}
