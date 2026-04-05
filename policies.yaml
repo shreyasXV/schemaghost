@@ -12,22 +12,47 @@ default_policy: deny
 # Global function blocklist — deny-by-default for dangerous PG functions.
 # These are blocked for ALL agents unless explicitly allowed per-agent.
 blocked_functions:
+  # Sleep / process control
   - pg_sleep
   - pg_terminate_backend
   - pg_cancel_backend
   - pg_reload_conf
   - pg_rotate_logfile
+  # Large object manipulation
   - lo_export
   - lo_import
   - lo_unlink
+  - lo_from_bytea
+  - lo_get
+  - lo_put
+  - lo_create
+  # Filesystem access
   - pg_read_file
   - pg_read_binary_file
   - pg_ls_dir
   - pg_stat_file
+  - pg_execute_server_program
+  # Config manipulation
   - set_config
+  # Remote connections
   - dblink
   - dblink_exec
-  - pg_execute_server_program
+  - dblink_connect
+  - dblink_send_query
+  # Dynamic SQL execution (query string → server-side exec)
+  - query_to_xml
+  - query_to_xml_and_xmlschema
+  - table_to_xml
+  - table_to_xmlschema
+  - table_to_xml_and_xmlschema
+  - schema_to_xml
+  - schema_to_xmlschema
+  - schema_to_xml_and_xmlschema
+  - database_to_xml
+  - database_to_xmlschema
+  - database_to_xml_and_xmlschema
+  - xpath_table
+  - ts_stat
 
 # Custom security profiles (optional — built-in profiles always available)
 # Built-in profiles: permissive, standard, strict
