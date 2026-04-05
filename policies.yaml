@@ -206,3 +206,6 @@ agents:
 # Unidentified connections (no agent: prefix in application_name)
 unidentified:
   policy: monitor  # monitor | deny | allow
+  blocked_tables:
+    - pg_catalog.*
+    - information_schema.*

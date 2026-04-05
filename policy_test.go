@@ -902,3 +902,120 @@ func TestLoadBlockedByStandardViaBlockedOps(t *testing.T) {
 		t.Error("standard profile should block LOAD")
 	}
 }
+
+// ── Unidentified connection checks ──
+
+func TestUnidentifiedBlockedTable(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Unidentified: UnidentifiedPolicy{
+			Policy:        "monitor",
+			BlockedTables: []string{"pg_catalog.*", "information_schema.*"},
+		},
+	})
+
+	// Should get a blocked_table violation, not just generic "unidentified_connection_monitored"
+	v := pe.CheckQuery(nil, "SELECT * FROM information_schema.columns", 1)
+	if v == nil {
+		t.Fatal("expected violation for unidentified querying information_schema")
+	}
+	if v.Reason != "blocked_table" {
+		t.Errorf("expected reason 'blocked_table', got %q", v.Reason)
+	}
+	if v.Table != "information_schema.columns" {
+		t.Errorf("expected table 'information_schema.columns', got %q", v.Table)
+	}
+}
+
+func TestUnidentifiedBlockedFunction(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"pg_read_file", "pg_sleep"},
+		Unidentified: UnidentifiedPolicy{
+			Policy: "monitor",
+		},
+	})
+
+	// Global blocked functions should apply to unidentified connections
+	v := pe.CheckQuery(nil, "SELECT pg_read_file('/etc/passwd')", 1)
+	if v == nil {
+		t.Fatal("expected violation for unidentified calling pg_read_file")
+	}
+	if v.Reason != "blocked_function:pg_read_file" {
+		t.Errorf("expected reason 'blocked_function:pg_read_file', got %q", v.Reason)
+	}
+}
+
+func TestUnidentifiedSafeQueryMonitored(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"pg_sleep"},
+		Unidentified: UnidentifiedPolicy{
+			Policy:        "monitor",
+			BlockedTables: []string{"information_schema.*"},
+		},
+	})
+
+	// A safe query from unidentified should still get the generic monitor log
+	v := pe.CheckQuery(nil, "SELECT 1", 1)
+	if v == nil {
+		t.Fatal("expected monitor violation for unidentified connection")
+	}
+	if v.Reason != "unidentified_connection_monitored" {
+		t.Errorf("expected generic monitor reason, got %q", v.Reason)
+	}
+}
+
+func TestUnidentifiedDenyStillRejectsAll(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Unidentified: UnidentifiedPolicy{
+			Policy:        "deny",
+			BlockedTables: []string{"information_schema.*"},
+		},
+	})
+
+	// Deny mode should reject immediately without running checks
+	v := pe.CheckQuery(nil, "SELECT 1", 1)
+	if v == nil {
+		t.Fatal("expected violation for deny mode")
+	}
+	if v.Reason != "unidentified_connection" {
+		t.Errorf("expected reason 'unidentified_connection', got %q", v.Reason)
+	}
+}
+
+func TestUnidentifiedAllowNoViolation(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"pg_sleep"},
+		Unidentified: UnidentifiedPolicy{
+			Policy: "allow",
+		},
+	})
+
+	// Allow mode + safe query = no violation
+	v := pe.CheckQuery(nil, "SELECT 1", 1)
+	if v != nil {
+		t.Errorf("expected no violation for allow mode safe query, got %q", v.Reason)
+	}
+}
+
+func TestUnidentifiedAllowStillBlocksFunctions(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"pg_sleep"},
+		Unidentified: UnidentifiedPolicy{
+			Policy: "allow",
+		},
+	})
+
+	// Allow mode should still enforce global function blocklist
+	v := pe.CheckQuery(nil, "SELECT pg_sleep(5)", 1)
+	if v == nil {
+		t.Fatal("expected violation for pg_sleep even in allow mode")
+	}
+	if v.Reason != "blocked_function:pg_sleep" {
+		t.Errorf("expected blocked_function:pg_sleep, got %q", v.Reason)
+	}
+}

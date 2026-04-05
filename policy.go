@@ -100,7 +100,8 @@ type MissionPolicy struct {
 
 // UnidentifiedPolicy handles connections without agent: prefix
 type UnidentifiedPolicy struct {
-	Policy string `yaml:"policy" json:"policy"` // monitor | deny | allow
+	Policy        string   `yaml:"policy" json:"policy"` // monitor | deny | allow
+	BlockedTables []string `yaml:"blocked_tables" json:"blocked_tables"`
 }
 
 // PolicyViolation records a policy breach
@@ -413,10 +414,10 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	tables := parsed.Tables
 	functions := parsed.Functions
 
-	// Unidentified connection — check BEFORE dereferencing identity
+	// Unidentified connection — full query analysis, then policy decision
 	if identity == nil {
 		if cfg.Unidentified.Policy == "deny" {
-			v := PolicyViolation{
+			return &PolicyViolation{
 				AgentID:   "unidentified",
 				Query:     truncateQuery(query),
 				Reason:    "unidentified_connection",
@@ -425,10 +426,48 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Action:    "pending",
 				Timestamp: time.Now(),
 			}
-			return &v
 		}
+
+		// For monitor/allow: run full checks (blocked tables + global blocked functions)
+		// Monitor: log specific violations; Allow: still enforce global blocklists
+
+		// Check blocked tables for unidentified connections
+		for _, table := range tables {
+			if isTableBlocked(table, cfg.Unidentified.BlockedTables) {
+				return &PolicyViolation{
+					AgentID:   "unidentified",
+					Query:     truncateQuery(query),
+					Reason:    "blocked_table",
+					Table:     table,
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+
+		// Check global function blocklist for unidentified connections
+		if len(cfg.BlockedFunctions) > 0 && len(functions) > 0 {
+			for _, fn := range functions {
+				fnLower := strings.ToLower(fn)
+				if isFunctionBlocked(fnLower, cfg.BlockedFunctions) {
+					return &PolicyViolation{
+						AgentID:   "unidentified",
+						Query:     truncateQuery(query),
+						Reason:    "blocked_function:" + fn,
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			}
+		}
+
+		// No specific violation found — log generic unidentified if monitor mode
 		if cfg.Unidentified.Policy == "monitor" {
-			v := PolicyViolation{
+			return &PolicyViolation{
 				AgentID:   "unidentified",
 				Query:     truncateQuery(query),
 				Reason:    "unidentified_connection_monitored",
@@ -437,8 +476,9 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 				Action:    "pending",
 				Timestamp: time.Now(),
 			}
-			return &v
 		}
+
+		// policy: allow, no violations
 		return nil
 	}
 
