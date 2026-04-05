@@ -690,6 +690,50 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(trig.WhenClause, tables)
 		}
 	}
+
+	// ViewStmt — recurse into the view's query
+	if vs := node.GetViewStmt(); vs != nil {
+		if vs.View != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: vs.View}
+			extractTablesFromNode(rv, tables)
+		}
+		if vs.Query != nil {
+			extractTablesFromNode(vs.Query, tables)
+		}
+	}
+
+	// IndexStmt — recurse into WHERE predicate and index expressions
+	if idx := node.GetIndexStmt(); idx != nil {
+		if idx.Relation != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: idx.Relation}
+			extractTablesFromNode(rv, tables)
+		}
+		if idx.WhereClause != nil {
+			extractTablesFromNode(idx.WhereClause, tables)
+		}
+		for _, param := range idx.IndexParams {
+			extractTablesFromNode(param, tables)
+		}
+	}
+
+	// IndexElem — recurse into expression (catches subqueries in expression indexes)
+	if ie := node.GetIndexElem(); ie != nil {
+		if ie.Expr != nil {
+			extractTablesFromNode(ie.Expr, tables)
+		}
+	}
+
+	// XmlExpr — recurse into args and named_args (catches subqueries in xmlelement etc)
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			extractTablesFromNode(arg, tables)
+		}
+		for _, arg := range xe.NamedArgs {
+			extractTablesFromNode(arg, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -948,6 +992,40 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		// Recurse into WHEN clause
 		if trig.WhenClause != nil {
 			extractFunctionsFromNode(trig.WhenClause, functions)
+		}
+	}
+
+	// ViewStmt — recurse into the view's query
+	if vs := node.GetViewStmt(); vs != nil {
+		if vs.Query != nil {
+			extractFunctionsFromNode(vs.Query, functions)
+		}
+	}
+
+	// IndexStmt — recurse into WHERE predicate and index expressions
+	if idx := node.GetIndexStmt(); idx != nil {
+		if idx.WhereClause != nil {
+			extractFunctionsFromNode(idx.WhereClause, functions)
+		}
+		for _, param := range idx.IndexParams {
+			extractFunctionsFromNode(param, functions)
+		}
+	}
+
+	// IndexElem — recurse into expression
+	if ie := node.GetIndexElem(); ie != nil {
+		if ie.Expr != nil {
+			extractFunctionsFromNode(ie.Expr, functions)
+		}
+	}
+
+	// XmlExpr — recurse into args and named_args
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+		for _, arg := range xe.NamedArgs {
+			extractFunctionsFromNode(arg, functions)
 		}
 	}
 }

@@ -818,3 +818,140 @@ func TestCreateTriggerFunctionExtraction(t *testing.T) {
 	}
 }
 
+// ── Red-team round 4 bypass regression tests ──
+
+func TestViewStmtExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+	}{
+		{
+			"view_blocked_table",
+			"CREATE VIEW tmp_view AS SELECT * FROM public.payments",
+			[]string{"public.payments"},
+		},
+		{
+			"view_join",
+			"CREATE OR REPLACE VIEW leak AS SELECT u.email, p.amount FROM public.users u JOIN public.payments p ON u.id = p.user_id",
+			[]string{"public.users", "public.payments"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+
+func TestIndexStmtExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"index_where_subquery",
+			"CREATE INDEX exfil_idx ON public.feedback (body) WHERE (SELECT count(*) FROM public.users) > 0",
+			[]string{"public.feedback", "public.users"},
+			nil,
+		},
+		{
+			"expression_index_subquery",
+			"CREATE INDEX idx ON public.feedback ((md5((SELECT email FROM public.users LIMIT 1))))",
+			[]string{"public.feedback", "public.users"},
+			[]string{"md5"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}
+
+func TestXmlExprExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+	}{
+		{
+			"xmlelement_subquery",
+			"SELECT xmlelement(name data, (SELECT count(*) FROM public.users))",
+			[]string{"public.users"},
+		},
+		{
+			"xmlelement_nested",
+			"SELECT xmlelement(name row, xmlattributes((SELECT email FROM public.users LIMIT 1) AS email))",
+			[]string{"public.users"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+
