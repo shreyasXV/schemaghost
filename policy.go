@@ -32,7 +32,7 @@ var BuiltinProfiles = map[string]SecurityProfile{
 	"standard": {
 		Name:              "standard",
 		BlockedCategories: []string{"DCL", "ADMIN", "EXTENSION", "FUNCTION"},
-		BlockedOperations: []string{"COPY", "NOTIFY", "LISTEN", "DISCARD"},
+		BlockedOperations: []string{"COPY", "NOTIFY", "LISTEN", "DISCARD", "LOCK", "LOAD"},
 		Conditions:        []string{"DELETE must include WHERE", "UPDATE must include WHERE"},
 		AllowUnknown:      false,
 	},

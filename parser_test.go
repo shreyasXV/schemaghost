@@ -1095,3 +1095,43 @@ func TestXmlExprExtraction(t *testing.T) {
 	}
 }
 
+
+func TestValuesListExtraction(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantFuncs []string
+	}{
+		{
+			"values_with_function",
+			"INSERT INTO t(a) VALUES (pg_sleep(5))",
+			[]string{"pg_sleep"},
+		},
+		{
+			"values_with_blocked_function",
+			"INSERT INTO t(a) VALUES (lo_export(1234, '/tmp/pwned'))",
+			[]string{"lo_export"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantFuncs {
+				found := false
+				for _, got := range parsed.Functions {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", want, parsed.Functions)
+				}
+			}
+		})
+	}
+}

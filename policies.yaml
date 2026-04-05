@@ -156,6 +156,7 @@ agents:
       - public.users
       - public.payments
       - pg_catalog.*
+      - information_schema.*
 
   langchain-agent:
     description: "LangChain research agent"
@@ -177,6 +178,8 @@ agents:
     blocked_tables:
       - public.users
       - public.payments
+      - pg_catalog.*
+      - information_schema.*
 
   demo-agent:
     description: "Demo agent for testing"
@@ -198,6 +201,7 @@ agents:
       - public.users
       - public.payments
       - pg_catalog.*
+      - information_schema.*
 
 # Unidentified connections (no agent: prefix in application_name)
 unidentified:

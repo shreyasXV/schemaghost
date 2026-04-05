@@ -873,3 +873,32 @@ func TestHasTrivialWhereUnit(t *testing.T) {
 		})
 	}
 }
+
+func TestLockBlockedByStandard(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	v := pe.CheckQuery(id("agent1", ""), "LOCK TABLE t IN ACCESS EXCLUSIVE MODE", 1)
+	if v == nil {
+		t.Error("standard profile should block LOCK")
+	}
+}
+
+func TestLoadBlockedByStandardViaBlockedOps(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// LOAD is ADMIN category (blocked) AND in BlockedOperations
+	v := pe.CheckQuery(id("agent1", ""), "LOAD 'evil.so'", 1)
+	if v == nil {
+		t.Error("standard profile should block LOAD")
+	}
+}

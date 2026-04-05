@@ -462,6 +462,14 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			rarg.Node = &pg_query.Node_SelectStmt{SelectStmt: sel.Rarg}
 			extractTablesFromNode(rarg, tables)
 		}
+		// VALUES lists can contain subqueries and function calls
+		for _, valRow := range sel.ValuesLists {
+			if list := valRow.GetList(); list != nil {
+				for _, item := range list.Items {
+					extractTablesFromNode(item, tables)
+				}
+			}
+		}
 	}
 
 	// InsertStmt
@@ -804,6 +812,14 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 			rarg := &pg_query.Node{}
 			rarg.Node = &pg_query.Node_SelectStmt{SelectStmt: sel.Rarg}
 			extractFunctionsFromNode(rarg, functions)
+		}
+		// VALUES lists can contain function calls
+		for _, valRow := range sel.ValuesLists {
+			if list := valRow.GetList(); list != nil {
+				for _, item := range list.Items {
+					extractFunctionsFromNode(item, functions)
+				}
+			}
 		}
 	}
 
