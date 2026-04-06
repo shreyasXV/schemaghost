@@ -683,6 +683,13 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
+	// NullTest (IS NULL / IS NOT NULL) — recurse into Arg
+	if nt := node.GetNullTest(); nt != nil {
+		if nt.Arg != nil {
+			extractTablesFromNode(nt.Arg, tables)
+		}
+	}
+
 	// RuleStmt — recurse into rule actions (DO ALSO / INSTEAD can contain full statements)
 	if rule := node.GetRuleStmt(); rule != nil {
 		if rule.Relation != nil {
@@ -1027,6 +1034,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 		if cw.Result != nil {
 			extractFunctionsFromNode(cw.Result, functions)
+		}
+	}
+
+	// NullTest (IS NULL / IS NOT NULL) — recurse into Arg
+	if nt := node.GetNullTest(); nt != nil {
+		if nt.Arg != nil {
+			extractFunctionsFromNode(nt.Arg, functions)
 		}
 	}
 

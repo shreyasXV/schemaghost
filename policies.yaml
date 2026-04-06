@@ -159,6 +159,12 @@ blocked_functions:
   - col_description
   - shobj_description
   - pg_typeof
+  - pg_get_serial_sequence
+  - pg_get_constraintdef
+  - pg_get_indexdef
+  - pg_get_viewdef
+  - pg_get_ruledef
+  - pg_get_triggerdef
 
   # ── String Obfuscation (used to build function names dynamically) ──
   - chr
