@@ -1242,3 +1242,50 @@ func TestRangeFunctionAndIndirectionTableExtraction(t *testing.T) {
 		})
 	}
 }
+
+func TestStatFuncWithRegclassDetection(t *testing.T) {
+	queries := []struct {
+		query     string
+		wantFuncs []string
+		wantRegproc bool
+	}{
+		{
+			"SELECT pg_stat_get_live_tuples('public.users'::regclass)",
+			[]string{"pg_stat_get_live_tuples"},
+			true,
+		},
+		{
+			"SELECT pg_relation_size('public.payments'::regclass)",
+			[]string{"pg_relation_size"},
+			true,
+		},
+		{
+			"SELECT pg_total_relation_size('public.payments'::regclass)",
+			[]string{"pg_total_relation_size"},
+			true,
+		},
+	}
+	for _, tt := range queries {
+		t.Run(tt.query, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, wf := range tt.wantFuncs {
+				found := false
+				for _, f := range parsed.Functions {
+					if f == wf {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected function %q in %v", wf, parsed.Functions)
+				}
+			}
+			if tt.wantRegproc && !parsed.HasRegprocCast {
+				t.Error("expected HasRegprocCast=true")
+			}
+		})
+	}
+}

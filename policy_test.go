@@ -1202,3 +1202,29 @@ func TestJsonXmlArrayFunctionsBlocked(t *testing.T) {
 		}
 	}
 }
+
+func TestRegprocRawStringFallback(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// These use string manipulation to build function names — AST may not catch
+	// the function name, but raw string scan catches ::regproc
+	blocked := []string{
+		"SELECT concat('pg_read','_file')::regproc('/etc/passwd')",
+		"SELECT format('%s_file','pg_read')::regproc",
+		"SELECT reverse('elif_daer_gp')::regproc",
+		"SELECT (chr(112)||chr(103)||'_sleep')::regproc",
+		"SELECT overlay('xx_sleep' placing 'pg' from 1 for 2)::regproc",
+		"SELECT ('pg_read_file')::regprocedure",
+	}
+	for _, q := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), q, 1)
+		if v == nil {
+			t.Errorf("should block regproc string manipulation: %q", q)
+		}
+	}
+}

@@ -646,7 +646,16 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 
 	// ── Regproc cast detection (defense-in-depth: block OID-resolving casts) ──
 	// Skip for permissive profile — it allows everything
-	if parsed.HasRegprocCast {
+	// Two-layer check: AST-based HasRegprocCast + raw string scan as fallback
+	regprocDetected := parsed.HasRegprocCast
+	if !regprocDetected {
+		// Raw string fallback — catches deeply nested or obfuscated casts
+		queryLower := strings.ToLower(query)
+		if strings.Contains(queryLower, "::regproc") || strings.Contains(queryLower, "::regprocedure") {
+			regprocDetected = true
+		}
+	}
+	if regprocDetected {
 		isPermissive := false
 		if agentPolicy.Profile != "" {
 			profile := ResolveProfile(agentPolicy.Profile, cfg)
