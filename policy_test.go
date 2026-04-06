@@ -1019,3 +1019,100 @@ func TestUnidentifiedAllowStillBlocksFunctions(t *testing.T) {
 		t.Errorf("expected blocked_function:pg_sleep, got %q", v.Reason)
 	}
 }
+
+func TestTrivialWhereExpandedPatterns(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	blocked := []struct {
+		query string
+		desc  string
+	}{
+		{"DELETE FROM t WHERE 0=0", "WHERE 0=0"},
+		{"DELETE FROM t WHERE (SELECT 1)=1", "WHERE (SELECT 1)=1"},
+		{"DELETE FROM t WHERE 'X'='X'", "WHERE 'X'='X'"},
+		{"DELETE FROM t WHERE 1 IS NOT NULL", "WHERE 1 IS NOT NULL"},
+		{"UPDATE t SET a=1 WHERE 0=0", "UPDATE WHERE 0=0"},
+		{"UPDATE t SET a=1 WHERE (SELECT TRUE)", "UPDATE WHERE (SELECT TRUE)"},
+	}
+	for _, tt := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+		if v == nil {
+			t.Errorf("should block trivial WHERE: %s (%q)", tt.desc, tt.query)
+		}
+	}
+
+	// Real WHERE clauses should pass
+	allowed := []string{
+		"DELETE FROM t WHERE id = 42",
+		"DELETE FROM t WHERE name = 'test' AND active = true",
+		"UPDATE t SET a=1 WHERE user_id IN (SELECT id FROM users)",
+	}
+	for _, q := range allowed {
+		v := pe.CheckQuery(id("agent1", ""), q, 1)
+		if v != nil {
+			t.Errorf("should allow real WHERE clause: %q, got %s", q, v.Reason)
+		}
+	}
+}
+
+func TestObfuscationFunctionsBlocked(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"chr", "encode", "decode", "convert_from", "reverse", "overlay", "lpad"},
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	blocked := []struct {
+		query string
+		fn    string
+	}{
+		{"SELECT chr(65) || chr(66)", "chr"},
+		{"SELECT encode('\\x48656c6c6f', 'escape')", "encode"},
+		{"SELECT decode('SGVsbG8=', 'base64')", "decode"},
+		{"SELECT convert_from('\\x48656c6c6f', 'UTF8')", "convert_from"},
+		{"SELECT reverse('elif_daer_gp')", "reverse"},
+	}
+	for _, tt := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+		if v == nil {
+			t.Errorf("should block obfuscation function %s: %q", tt.fn, tt.query)
+		}
+	}
+}
+
+func TestRegprocCastPermissiveAllowed(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "permissive"},
+		},
+	})
+
+	// Permissive should allow regproc casts
+	v := pe.CheckQuery(id("agent1", ""), "SELECT 'pg_sleep'::regproc", 1)
+	if v != nil {
+		t.Errorf("permissive should allow regproc casts, got %s", v.Reason)
+	}
+}
+
+func TestRegprocCastStandardBlocked(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// Standard should block regproc casts (defense-in-depth)
+	v := pe.CheckQuery(id("agent1", ""), "SELECT ('pg_read_' || 'file')::regproc", 1)
+	if v == nil {
+		t.Error("standard should block regproc cast with string concatenation")
+	}
+}

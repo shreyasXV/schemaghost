@@ -120,6 +120,38 @@ blocked_functions:
   - shobj_description
   - pg_typeof
 
+  # ── String Obfuscation (used to build function names dynamically) ──
+  - chr
+  - ascii
+  - overlay
+  - lpad
+  - rpad
+  - reverse
+  - translate
+  - regexp_replace
+  - convert_from
+  - convert_to
+  - encode
+  - decode
+
+  # ── Sequence Manipulation ──
+  - setval
+  - nextval
+  - currval
+
+  # ── System Info ──
+  - aclexplode
+  - pg_get_functiondef
+  - pg_get_viewdef
+  - pg_get_indexdef
+  - pg_get_triggerdef
+  - pg_get_ruledef
+  - pg_get_constraintdef
+  - pg_get_expr
+  - pg_get_userbyid
+  - pg_identify_object*
+  - format
+
 # Custom security profiles (optional — built-in profiles always available)
 # Built-in profiles: permissive, standard, strict
 profiles:

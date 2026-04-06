@@ -348,6 +348,10 @@ func hasTrivialWhere(query string) bool {
 		"1=1", "1 = 1", "TRUE", "'1'='1'", "'A'='A'",
 		"1<>0", "1 <> 0", "1!=0", "1 != 0",
 		"NOT FALSE", "1 > 0", "1 >= 1", "0 < 1", "0 <= 1",
+		"0=0", "0 = 0", "2=2", "2 = 2",
+		"(SELECT 1)=1", "(SELECT 1) = 1", "(SELECT TRUE)",
+		"'X'='X'", "'T'='T'",
+		"1 IS NOT NULL", "'' = ''", "NULL IS NULL",
 	}
 	for _, pattern := range trivialPatterns {
 		if strings.HasPrefix(whereClause, pattern) {
@@ -641,16 +645,26 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	}
 
 	// ── Regproc cast detection (defense-in-depth: block OID-resolving casts) ──
+	// Skip for permissive profile — it allows everything
 	if parsed.HasRegprocCast {
-		return &PolicyViolation{
-			AgentID:   identity.AgentID,
-			MissionID: identity.MissionID,
-			Query:     truncateQuery(query),
-			Reason:    "blocked_regproc_cast",
-			Operation: operation,
-			PID:       pid,
-			Action:    "pending",
-			Timestamp: time.Now(),
+		isPermissive := false
+		if agentPolicy.Profile != "" {
+			profile := ResolveProfile(agentPolicy.Profile, cfg)
+			if profile != nil && profile.Name == "permissive" {
+				isPermissive = true
+			}
+		}
+		if !isPermissive {
+			return &PolicyViolation{
+				AgentID:   identity.AgentID,
+				MissionID: identity.MissionID,
+				Query:     truncateQuery(query),
+				Reason:    "blocked_regproc_cast",
+				Operation: operation,
+				PID:       pid,
+				Action:    "pending",
+				Timestamp: time.Now(),
+			}
 		}
 	}
 
