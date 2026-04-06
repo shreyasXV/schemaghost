@@ -568,6 +568,13 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
+	// RangeTableSample (FROM table TABLESAMPLE method)
+	if rts := node.GetRangeTableSample(); rts != nil {
+		if rts.Relation != nil {
+			extractTablesFromNode(rts.Relation, tables)
+		}
+	}
+
 	// A_Indirection — array subscript (expr)[n], field access expr.field
 	if ai := node.GetAIndirection(); ai != nil {
 		if ai.Arg != nil {
