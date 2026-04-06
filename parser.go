@@ -897,6 +897,61 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(cc.Arg, tables)
 		}
 	}
+
+	// RowExpr — ROW(expr, expr, ...) constructor; args can contain subqueries
+	if re := node.GetRowExpr(); re != nil {
+		for _, arg := range re.Args {
+			extractTablesFromNode(arg, tables)
+		}
+	}
+
+	// ArrayExpr — ARRAY[expr, ...] constructor
+	if ae := node.GetArrayExpr(); ae != nil {
+		for _, elem := range ae.Elements {
+			extractTablesFromNode(elem, tables)
+		}
+	}
+
+	// ScalarArrayOpExpr — expr IN (array) / expr = ANY(array)
+	if sa := node.GetScalarArrayOpExpr(); sa != nil {
+		for _, arg := range sa.Args {
+			extractTablesFromNode(arg, tables)
+		}
+	}
+
+	// RowCompareExpr — ROW(a,b) < ROW(c,d)
+	if rc := node.GetRowCompareExpr(); rc != nil {
+		for _, arg := range rc.Largs {
+			extractTablesFromNode(arg, tables)
+		}
+		for _, arg := range rc.Rargs {
+			extractTablesFromNode(arg, tables)
+		}
+	}
+
+	// FieldSelect — (composite).field
+	if fs := node.GetFieldSelect(); fs != nil {
+		if fs.Arg != nil {
+			extractTablesFromNode(fs.Arg, tables)
+		}
+	}
+
+	// ArrayCoerceExpr — CAST(array AS type[])
+	if ac := node.GetArrayCoerceExpr(); ac != nil {
+		if ac.Arg != nil {
+			extractTablesFromNode(ac.Arg, tables)
+		}
+	}
+
+	// XmlExpr — xmlelement, xmlforest, etc. can contain subqueries
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			extractTablesFromNode(arg, tables)
+		}
+		for _, arg := range xe.NamedArgs {
+			extractTablesFromNode(arg, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -1336,6 +1391,61 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	if cc := node.GetCollateClause(); cc != nil {
 		if cc.Arg != nil {
 			extractFunctionsFromNode(cc.Arg, functions)
+		}
+	}
+
+	// RowExpr — ROW(expr, expr, ...) constructor
+	if re := node.GetRowExpr(); re != nil {
+		for _, arg := range re.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// ArrayExpr — ARRAY[expr, ...] constructor
+	if ae := node.GetArrayExpr(); ae != nil {
+		for _, elem := range ae.Elements {
+			extractFunctionsFromNode(elem, functions)
+		}
+	}
+
+	// ScalarArrayOpExpr — expr IN (array) / expr = ANY(array)
+	if sa := node.GetScalarArrayOpExpr(); sa != nil {
+		for _, arg := range sa.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// RowCompareExpr — ROW(a,b) < ROW(c,d)
+	if rc := node.GetRowCompareExpr(); rc != nil {
+		for _, arg := range rc.Largs {
+			extractFunctionsFromNode(arg, functions)
+		}
+		for _, arg := range rc.Rargs {
+			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// FieldSelect — (composite).field
+	if fs := node.GetFieldSelect(); fs != nil {
+		if fs.Arg != nil {
+			extractFunctionsFromNode(fs.Arg, functions)
+		}
+	}
+
+	// ArrayCoerceExpr — CAST(array AS type[])
+	if ac := node.GetArrayCoerceExpr(); ac != nil {
+		if ac.Arg != nil {
+			extractFunctionsFromNode(ac.Arg, functions)
+		}
+	}
+
+	// XmlExpr — xmlelement, xmlforest, etc.
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+		for _, arg := range xe.NamedArgs {
+			extractFunctionsFromNode(arg, functions)
 		}
 	}
 }
