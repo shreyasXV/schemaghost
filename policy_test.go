@@ -1171,7 +1171,7 @@ func TestStandardBlocksDDL(t *testing.T) {
 func TestJsonXmlArrayFunctionsBlocked(t *testing.T) {
 	pe := newTestEngine(&PolicyConfig{
 		DefaultPolicy:   "deny",
-		BlockedFunctions: []string{"json_agg", "json_each*", "jsonb_path_query*", "unnest", "array_agg", "xpath", "row_to_json"},
+		BlockedFunctions: []string{"json_agg", "json_each*", "jsonb_path_query*", "unnest", "array_agg", "xpath", "xpath_exists", "row_to_json", "json_strip_nulls", "jsonb_strip_nulls", "jsonb_insert", "jsonb_set", "json_build_array", "jsonb_build_array"},
 		Agents: map[string]AgentPolicy{
 			"agent1": {Profile: "standard"},
 		},
@@ -1186,7 +1186,14 @@ func TestJsonXmlArrayFunctionsBlocked(t *testing.T) {
 		{"SELECT unnest(ARRAY[1,2,3])", "unnest"},
 		{"SELECT array_agg(id) FROM feedback", "array_agg"},
 		{"SELECT xpath('/a', '<a>1</a>')", "xpath"},
+		{"SELECT xpath_exists('/a', '<a>1</a>')", "xpath_exists"},
 		{"SELECT row_to_json(t) FROM feedback t", "row_to_json"},
+		{"SELECT json_strip_nulls('{\"a\":null}'::json)", "json_strip_nulls"},
+		{"SELECT jsonb_strip_nulls('{\"a\":null}'::jsonb)", "jsonb_strip_nulls"},
+		{"SELECT jsonb_insert('{\"a\":1}'::jsonb, '{b}', '2')", "jsonb_insert"},
+		{"SELECT jsonb_set('{\"a\":1}'::jsonb, '{a}', '2')", "jsonb_set"},
+		{"SELECT json_build_array(1, 2, 3)", "json_build_array"},
+		{"SELECT jsonb_build_array(1, 2, 3)", "jsonb_build_array"},
 	}
 	for _, tt := range blocked {
 		v := pe.CheckQuery(id("agent1", ""), tt.query, 1)

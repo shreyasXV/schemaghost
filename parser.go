@@ -557,6 +557,24 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		extractTablesFromNode(rsub.Subquery, tables)
 	}
 
+	// RangeFunction (functions in FROM clause like unnest, dblink, generate_series)
+	if rf := node.GetRangeFunction(); rf != nil {
+		for _, funcList := range rf.Functions {
+			if list := funcList.GetList(); list != nil {
+				for _, item := range list.Items {
+					extractTablesFromNode(item, tables)
+				}
+			}
+		}
+	}
+
+	// A_Indirection — array subscript (expr)[n], field access expr.field
+	if ai := node.GetAIndirection(); ai != nil {
+		if ai.Arg != nil {
+			extractTablesFromNode(ai.Arg, tables)
+		}
+	}
+
 	// FuncCall — check for table references in function args
 	if fc := node.GetFuncCall(); fc != nil {
 		for _, arg := range fc.Args {
@@ -879,6 +897,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 	}
 
+	// A_Indirection — array subscript (expr)[n], field access expr.field
+	if ai := node.GetAIndirection(); ai != nil {
+		if ai.Arg != nil {
+			extractFunctionsFromNode(ai.Arg, functions)
+		}
+	}
+
 	// BoolExpr
 	if be := node.GetBoolExpr(); be != nil {
 		for _, arg := range be.Args {
@@ -1197,6 +1222,11 @@ func hasRegprocCast(node *pg_query.Node) bool {
 	}
 	if prep := node.GetPrepareStmt(); prep != nil {
 		if hasRegprocCast(prep.Query) {
+			return true
+		}
+	}
+	if ai := node.GetAIndirection(); ai != nil {
+		if ai.Arg != nil && hasRegprocCast(ai.Arg) {
 			return true
 		}
 	}

@@ -1162,3 +1162,83 @@ func TestRegprocCastFlagDetection(t *testing.T) {
 		})
 	}
 }
+
+func TestRangeFunctionAndIndirectionTableExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+		wantFuncs  []string
+	}{
+		{
+			"unnest_array_subquery_from_blocked",
+			"SELECT * FROM unnest(ARRAY(SELECT id FROM public.users))",
+			[]string{"public.users"},
+			[]string{"unnest"},
+		},
+		{
+			"array_subscript_blocked_table",
+			"SELECT (ARRAY(SELECT email FROM public.users))[1] FROM public.feedback WHERE 1=1",
+			[]string{"public.users", "public.feedback"},
+			nil,
+		},
+		{
+			"json_to_recordset_with_blocked_subquery",
+			"SELECT * FROM json_to_recordset((SELECT json_agg(row_to_json(u)) FROM public.users u)::json) AS x(id int, email text)",
+			[]string{"public.users"},
+			[]string{"json_to_recordset", "json_agg", "row_to_json"},
+		},
+		{
+			"xpath_query_to_xml_functions",
+			"SELECT (xpath('//text()', query_to_xml('SELECT 1', true, false, '')))[1]::text",
+			nil,
+			[]string{"xpath", "query_to_xml"},
+		},
+		{
+			"lateral_join_subquery",
+			"SELECT * FROM public.feedback CROSS JOIN LATERAL (SELECT * FROM json_to_recordset((SELECT json_agg(row_to_json(u)) FROM public.users u)::json) AS x(id int)) sub",
+			[]string{"public.feedback", "public.users"},
+			[]string{"json_to_recordset", "json_agg", "row_to_json"},
+		},
+		{
+			"schema_qualified_function",
+			"SELECT pg_catalog.pg_read_file('/etc/passwd')",
+			nil,
+			[]string{"pg_catalog.pg_read_file", "pg_read_file"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if tt.wantTables != nil {
+				for _, want := range tt.wantTables {
+					found := false
+					for _, got := range parsed.Tables {
+						if got == want {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("missing table %q in %v", want, parsed.Tables)
+					}
+				}
+			}
+			if tt.wantFuncs != nil {
+				for _, want := range tt.wantFuncs {
+					found := false
+					for _, got := range parsed.Functions {
+						if got == want {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("missing function %q in %v", want, parsed.Functions)
+					}
+				}
+			}
+		})
+	}
+}

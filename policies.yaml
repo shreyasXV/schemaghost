@@ -129,6 +129,12 @@ blocked_functions:
   - to_jsonb
   - json_build_object
   - jsonb_build_object
+  - json_build_array
+  - jsonb_build_array
+  - json_strip_nulls
+  - jsonb_strip_nulls
+  - jsonb_insert
+  - jsonb_set
 
   # ── Array / Unnest (data exfiltration via array constructors) ──
   - unnest
@@ -138,6 +144,7 @@ blocked_functions:
 
   # ── XML (query execution via XML functions) ──
   - xpath
+  - xpath_exists
   - xmlparse
   - xmlserialize
   - xmlelement
