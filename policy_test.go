@@ -1116,3 +1116,82 @@ func TestRegprocCastStandardBlocked(t *testing.T) {
 		t.Error("standard should block regproc cast with string concatenation")
 	}
 }
+
+func TestMultiStatementExactRedTeamBypasses(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	blocked := []struct {
+		query string
+		desc  string
+	}{
+		{"SELECT 1; DROP TABLE feedback", "SELECT;DROP"},
+		{"SELECT 1; TRUNCATE feedback", "SELECT;TRUNCATE"},
+		{"SELECT 1; GRANT SELECT ON feedback TO evil", "SELECT;GRANT"},
+		{"SELECT 1; ALTER TABLE feedback RENAME TO pwned", "SELECT;RENAME"},
+		{"BEGIN; DROP TABLE feedback; COMMIT", "BEGIN;DROP;COMMIT"},
+		{"SET work_mem='256MB'; CREATE EXTENSION evil", "SET;CREATE EXTENSION"},
+	}
+	for _, tt := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+		if v == nil {
+			t.Errorf("multi-stmt %s should be blocked: %q", tt.desc, tt.query)
+		}
+	}
+}
+
+func TestStandardBlocksDDL(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	blocked := []string{
+		"CREATE TABLE evil(id int)",
+		"DROP TABLE feedback",
+		"ALTER TABLE feedback ADD COLUMN pwned text",
+		"TRUNCATE feedback",
+		"CREATE INDEX idx ON feedback(id)",
+		"CREATE VIEW leak AS SELECT 1",
+	}
+	for _, q := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), q, 1)
+		if v == nil {
+			t.Errorf("standard should block DDL: %q", q)
+		}
+	}
+}
+
+func TestJsonXmlArrayFunctionsBlocked(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy:   "deny",
+		BlockedFunctions: []string{"json_agg", "json_each*", "jsonb_path_query*", "unnest", "array_agg", "xpath", "row_to_json"},
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	blocked := []struct {
+		query string
+		fn    string
+	}{
+		{"SELECT json_agg(t) FROM feedback t", "json_agg"},
+		{"SELECT * FROM json_each('{}'::json)", "json_each"},
+		{"SELECT unnest(ARRAY[1,2,3])", "unnest"},
+		{"SELECT array_agg(id) FROM feedback", "array_agg"},
+		{"SELECT xpath('/a', '<a>1</a>')", "xpath"},
+		{"SELECT row_to_json(t) FROM feedback t", "row_to_json"},
+	}
+	for _, tt := range blocked {
+		v := pe.CheckQuery(id("agent1", ""), tt.query, 1)
+		if v == nil {
+			t.Errorf("should block %s: %q", tt.fn, tt.query)
+		}
+	}
+}

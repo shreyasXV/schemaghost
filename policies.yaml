@@ -113,6 +113,39 @@ blocked_functions:
   # ── JSON/record manipulation (can bypass type restrictions) ──
   - json_populate_record*
   - jsonb_populate_record*
+  - json_to_record*
+  - jsonb_to_record*
+  - json_each*
+  - jsonb_each*
+  - json_agg
+  - jsonb_agg
+  - json_object_agg
+  - jsonb_object_agg
+  - jsonb_path_query*
+  - json_array_elements*
+  - jsonb_array_elements*
+  - row_to_json
+  - to_json
+  - to_jsonb
+  - json_build_object
+  - jsonb_build_object
+
+  # ── Array / Unnest (data exfiltration via array constructors) ──
+  - unnest
+  - array_agg
+  - array_to_string
+  - string_to_array
+
+  # ── XML (query execution via XML functions) ──
+  - xpath
+  - xmlparse
+  - xmlserialize
+  - xmlelement
+  - xmlforest
+  - xmlagg
+  - xmlconcat
+  - xmlroot
+  - xmlpi
 
   # ── Metadata / Type inspection ──
   - obj_description
