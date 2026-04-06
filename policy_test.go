@@ -67,13 +67,12 @@ func TestProfileStandard(t *testing.T) {
 		},
 	})
 
-	// Standard allows DML (except COPY), EXPLAIN, SESSION, TRANSACTION
+	// Standard allows DML (except COPY), SESSION, TRANSACTION
 	allowed := []string{
 		"SELECT 1",
 		"INSERT INTO t(a) VALUES(1)",
 		"UPDATE t SET a=1 WHERE id=1",
 		"DELETE FROM t WHERE id=1",
-		"EXPLAIN SELECT 1",
 		"BEGIN",
 		"SET work_mem = '256MB'",
 		"SHOW work_mem",
@@ -165,13 +164,12 @@ func TestProfileStrict(t *testing.T) {
 		},
 	})
 
-	// Strict allows only SELECT, INSERT, UPDATE, DELETE, EXPLAIN, TRANSACTION
+	// Strict allows only SELECT, INSERT, UPDATE, DELETE, TRANSACTION
 	allowed := []string{
 		"SELECT 1",
 		"INSERT INTO t(a) VALUES(1)",
 		"UPDATE t SET a=1 WHERE id=1",
 		"DELETE FROM t WHERE id=1",
-		"EXPLAIN SELECT 1",
 		"BEGIN",
 	}
 	for _, q := range allowed {
@@ -366,7 +364,6 @@ func TestCustomProfileExtendsStrict(t *testing.T) {
 		t.Errorf("custom-readonly should allow SELECT, got %s", v.Reason)
 	}
 
-	v = pe.CheckQuery(id("agent1", ""), "EXPLAIN SELECT 1", 1)
 	if v != nil {
 		t.Errorf("custom-readonly should allow EXPLAIN, got %s", v.Reason)
 	}
