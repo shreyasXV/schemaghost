@@ -438,7 +438,7 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
-	// SelectStmt
+	// SelectStmt — walk ALL expression-bearing fields
 	if sel := node.GetSelectStmt(); sel != nil {
 		for _, from := range sel.FromClause {
 			extractTablesFromNode(from, tables)
@@ -448,6 +448,33 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 		for _, target := range sel.TargetList {
 			extractTablesFromNode(target, tables)
+		}
+		// ORDER BY — subqueries here can exfiltrate blocked tables
+		for _, sortItem := range sel.SortClause {
+			extractTablesFromNode(sortItem, tables)
+		}
+		// GROUP BY — can contain expressions with subqueries
+		for _, groupItem := range sel.GroupClause {
+			extractTablesFromNode(groupItem, tables)
+		}
+		// HAVING — subqueries can reference blocked tables
+		if sel.HavingClause != nil {
+			extractTablesFromNode(sel.HavingClause, tables)
+		}
+		// LIMIT / OFFSET — scalar subqueries can leak row counts
+		if sel.LimitCount != nil {
+			extractTablesFromNode(sel.LimitCount, tables)
+		}
+		if sel.LimitOffset != nil {
+			extractTablesFromNode(sel.LimitOffset, tables)
+		}
+		// WINDOW clauses
+		for _, winItem := range sel.WindowClause {
+			extractTablesFromNode(winItem, tables)
+		}
+		// DISTINCT ON
+		for _, distItem := range sel.DistinctClause {
+			extractTablesFromNode(distItem, tables)
 		}
 		// CTEs
 		if sel.WithClause != nil {
@@ -475,6 +502,10 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 					extractTablesFromNode(item, tables)
 				}
 			}
+		}
+		// LOCKING clause (FOR UPDATE OF table_name)
+		for _, lockItem := range sel.LockingClause {
+			extractTablesFromNode(lockItem, tables)
 		}
 	}
 
@@ -582,10 +613,54 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
-	// FuncCall — check for table references in function args
+	// FuncCall — check for table references in function args AND aggregate clauses
 	if fc := node.GetFuncCall(); fc != nil {
 		for _, arg := range fc.Args {
 			extractTablesFromNode(arg, tables)
+		}
+		// Aggregate ORDER BY (e.g. string_agg(... ORDER BY ...))
+		for _, orderItem := range fc.AggOrder {
+			extractTablesFromNode(orderItem, tables)
+		}
+		// FILTER clause (e.g. count(*) FILTER (WHERE ...))
+		if fc.AggFilter != nil {
+			extractTablesFromNode(fc.AggFilter, tables)
+		}
+		// Window function OVER clause
+		if fc.Over != nil {
+			wn := &pg_query.Node{}
+			wn.Node = &pg_query.Node_WindowDef{WindowDef: fc.Over}
+			extractTablesFromNode(wn, tables)
+		}
+	}
+
+	// SortBy — ORDER BY expressions can contain subqueries
+	if sb := node.GetSortBy(); sb != nil {
+		if sb.Node != nil {
+			extractTablesFromNode(sb.Node, tables)
+		}
+	}
+
+	// WindowDef — PARTITION BY, ORDER BY, frame offsets
+	if wd := node.GetWindowDef(); wd != nil {
+		for _, partItem := range wd.PartitionClause {
+			extractTablesFromNode(partItem, tables)
+		}
+		for _, orderItem := range wd.OrderClause {
+			extractTablesFromNode(orderItem, tables)
+		}
+		if wd.StartOffset != nil {
+			extractTablesFromNode(wd.StartOffset, tables)
+		}
+		if wd.EndOffset != nil {
+			extractTablesFromNode(wd.EndOffset, tables)
+		}
+	}
+
+	// GroupingSet — CUBE, ROLLUP, GROUPING SETS
+	if gs := node.GetGroupingSet(); gs != nil {
+		for _, item := range gs.Content {
+			extractTablesFromNode(item, tables)
 		}
 	}
 
@@ -851,9 +926,53 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		for _, arg := range fc.Args {
 			extractFunctionsFromNode(arg, functions)
 		}
+		// Aggregate ORDER BY (e.g. string_agg(... ORDER BY ...))
+		for _, orderItem := range fc.AggOrder {
+			extractFunctionsFromNode(orderItem, functions)
+		}
+		// FILTER clause (e.g. count(*) FILTER (WHERE ...))
+		if fc.AggFilter != nil {
+			extractFunctionsFromNode(fc.AggFilter, functions)
+		}
+		// Window function OVER clause
+		if fc.Over != nil {
+			wn := &pg_query.Node{}
+			wn.Node = &pg_query.Node_WindowDef{WindowDef: fc.Over}
+			extractFunctionsFromNode(wn, functions)
+		}
 	}
 
-	// Recurse into all statement types
+	// SortBy — ORDER BY expressions
+	if sb := node.GetSortBy(); sb != nil {
+		if sb.Node != nil {
+			extractFunctionsFromNode(sb.Node, functions)
+		}
+	}
+
+	// WindowDef — PARTITION BY, ORDER BY, frame offsets
+	if wd := node.GetWindowDef(); wd != nil {
+		for _, partItem := range wd.PartitionClause {
+			extractFunctionsFromNode(partItem, functions)
+		}
+		for _, orderItem := range wd.OrderClause {
+			extractFunctionsFromNode(orderItem, functions)
+		}
+		if wd.StartOffset != nil {
+			extractFunctionsFromNode(wd.StartOffset, functions)
+		}
+		if wd.EndOffset != nil {
+			extractFunctionsFromNode(wd.EndOffset, functions)
+		}
+	}
+
+	// GroupingSet — CUBE, ROLLUP, GROUPING SETS
+	if gs := node.GetGroupingSet(); gs != nil {
+		for _, item := range gs.Content {
+			extractFunctionsFromNode(item, functions)
+		}
+	}
+
+	// Recurse into all statement types — walk ALL expression-bearing fields
 	if sel := node.GetSelectStmt(); sel != nil {
 		for _, from := range sel.FromClause {
 			extractFunctionsFromNode(from, functions)
@@ -863,6 +982,33 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 		if sel.WhereClause != nil {
 			extractFunctionsFromNode(sel.WhereClause, functions)
+		}
+		// ORDER BY
+		for _, sortItem := range sel.SortClause {
+			extractFunctionsFromNode(sortItem, functions)
+		}
+		// GROUP BY
+		for _, groupItem := range sel.GroupClause {
+			extractFunctionsFromNode(groupItem, functions)
+		}
+		// HAVING
+		if sel.HavingClause != nil {
+			extractFunctionsFromNode(sel.HavingClause, functions)
+		}
+		// LIMIT / OFFSET
+		if sel.LimitCount != nil {
+			extractFunctionsFromNode(sel.LimitCount, functions)
+		}
+		if sel.LimitOffset != nil {
+			extractFunctionsFromNode(sel.LimitOffset, functions)
+		}
+		// WINDOW clauses
+		for _, winItem := range sel.WindowClause {
+			extractFunctionsFromNode(winItem, functions)
+		}
+		// DISTINCT ON
+		for _, distItem := range sel.DistinctClause {
+			extractFunctionsFromNode(distItem, functions)
 		}
 		if sel.WithClause != nil {
 			for _, cte := range sel.WithClause.Ctes {
