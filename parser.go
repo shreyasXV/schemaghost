@@ -792,6 +792,36 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(arg, tables)
 		}
 	}
+
+	// NullTest — recurse into arg (catches subqueries in IS [NOT] NULL)
+	if nt := node.GetNullTest(); nt != nil {
+		if nt.Arg != nil {
+			extractTablesFromNode(nt.Arg, tables)
+		}
+	}
+
+	// CoalesceExpr — recurse into args (COALESCE can contain subqueries)
+	if ce := node.GetCoalesceExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			extractTablesFromNode(arg, tables)
+		}
+	}
+
+	// MinMaxExpr — recurse into args (GREATEST/LEAST can contain subqueries)
+	if mm := node.GetMinMaxExpr(); mm != nil {
+		for _, arg := range mm.Args {
+			extractTablesFromNode(arg, tables)
+		}
+	}
+
+	// NullIfExpr is represented as a FuncCall with funcname "nullif" — already handled by FuncCall
+
+	// CollateClause — recurse into arg
+	if cc := node.GetCollateClause(); cc != nil {
+		if cc.Arg != nil {
+			extractTablesFromNode(cc.Arg, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -1132,6 +1162,34 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 		for _, arg := range xe.NamedArgs {
 			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// NullTest — recurse into arg (catches function calls in IS [NOT] NULL)
+	if nt := node.GetNullTest(); nt != nil {
+		if nt.Arg != nil {
+			extractFunctionsFromNode(nt.Arg, functions)
+		}
+	}
+
+	// CoalesceExpr — recurse into args
+	if ce := node.GetCoalesceExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// MinMaxExpr — recurse into args (GREATEST/LEAST)
+	if mm := node.GetMinMaxExpr(); mm != nil {
+		for _, arg := range mm.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// CollateClause — recurse into arg
+	if cc := node.GetCollateClause(); cc != nil {
+		if cc.Arg != nil {
+			extractFunctionsFromNode(cc.Arg, functions)
 		}
 	}
 }

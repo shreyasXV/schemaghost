@@ -1055,6 +1055,72 @@ func TestLoadIsAdminCategory(t *testing.T) {
 	}
 }
 
+// ── NullTest / CoalesceExpr table extraction ──
+
+func TestNullTestSubqueryExtraction(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantTables []string
+	}{
+		{
+			"is_not_null_subquery",
+			"SELECT feedback FROM public.feedback WHERE (SELECT 1 FROM public.users LIMIT 1) IS NOT NULL",
+			[]string{"public.feedback", "public.users"},
+		},
+		{
+			"case_when_is_not_null",
+			"SELECT feedback FROM public.feedback WHERE CASE WHEN (SELECT 1 FROM public.users LIMIT 1) IS NOT NULL THEN true ELSE false END",
+			[]string{"public.feedback", "public.users"},
+		},
+		{
+			"is_null_subquery",
+			"SELECT 1 FROM public.feedback WHERE (SELECT email FROM public.payments LIMIT 1) IS NULL",
+			[]string{"public.feedback", "public.payments"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := ParseQuery(tt.query)
+			if !parsed.UsedAST {
+				t.Fatal("expected AST parsing")
+			}
+			for _, want := range tt.wantTables {
+				found := false
+				for _, got := range parsed.Tables {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected table %q in %v", want, parsed.Tables)
+				}
+			}
+		})
+	}
+}
+
+func TestCoalesceSubqueryExtraction(t *testing.T) {
+	parsed := ParseQuery("SELECT COALESCE((SELECT email FROM public.users LIMIT 1), 'default') FROM public.feedback")
+	if !parsed.UsedAST {
+		t.Fatal("expected AST parsing")
+	}
+	for _, want := range []string{"public.users", "public.feedback"} {
+		found := false
+		for _, got := range parsed.Tables {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected table %q in %v", want, parsed.Tables)
+		}
+	}
+}
+
 func TestXmlExprExtraction(t *testing.T) {
 	tests := []struct {
 		name       string

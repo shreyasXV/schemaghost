@@ -1228,3 +1228,96 @@ func TestRegprocRawStringFallback(t *testing.T) {
 		}
 	}
 }
+
+// ── AST parse failure: fail-closed for non-permissive profiles ──
+
+func TestASTParseFailureBlocksStandardProfile(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	// Queries with invalid SQL (LIMIT before WHERE) that crash AST parser
+	invalidQueries := []string{
+		"SELECT pg_sleep(5) FROM t LIMIT 1 WHERE 1=1",
+		"SELECT current_setting('port') FROM t LIMIT 1 WHERE 1=1",
+		"SELECT ('pg_read_file'::regproc)('/etc/passwd')",
+	}
+	for _, q := range invalidQueries {
+		v := pe.CheckQuery(id("agent1", ""), q, 0)
+		if v == nil {
+			t.Errorf("should block AST-unparseable query for standard profile: %s", q)
+		}
+	}
+}
+
+func TestASTParseFailureAllowsPermissiveProfile(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "permissive"},
+		},
+	})
+
+	// Invalid SQL should still be allowed for permissive profile
+	v := pe.CheckQuery(id("agent1", ""), "SELECT 1 FROM t LIMIT 1 WHERE 1=1", 0)
+	if v != nil {
+		t.Errorf("permissive profile should not block on AST parse failure, got: %s", v.Reason)
+	}
+}
+
+func TestRegexFallbackCatchesRegproc(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "standard"},
+		},
+	})
+
+	v := pe.CheckQuery(id("agent1", ""), "SELECT (('pg_read' || '_file')::regproc)('/etc/passwd')", 0)
+	if v == nil {
+		t.Fatal("should catch regproc in regex fallback")
+	}
+	if v.Reason != "blocked_regproc_cast" {
+		t.Errorf("expected blocked_regproc_cast, got %s", v.Reason)
+	}
+}
+
+func TestRegexFallbackCatchesMultiStatement(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {Profile: "permissive"}, // even permissive should catch via regex
+		},
+	})
+
+	// Multi-statement with dangerous second op — regex catches before permissive allows
+	v := pe.CheckQuery(id("agent1", ""), "SELECT 1; GRANT ALL ON ALL TABLES TO public", 0)
+	if v == nil {
+		t.Fatal("should catch multi-statement GRANT via regex fallback")
+	}
+}
+
+func TestCaseWhenHiddenTableBlocked(t *testing.T) {
+	pe := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Agents: map[string]AgentPolicy{
+			"agent1": {
+				Profile: "standard",
+				BlockedTables: []string{"public.users"},
+				Missions: map[string]MissionPolicy{
+					"read": {Tables: []string{"public.feedback"}},
+				},
+			},
+		},
+	})
+
+	// CASE WHEN with hidden subquery accessing blocked table
+	v := pe.CheckQuery(id("agent1", "read"),
+		"SELECT feedback FROM public.feedback WHERE CASE WHEN (SELECT 1 FROM public.users LIMIT 1) IS NOT NULL THEN true ELSE false END", 0)
+	if v == nil {
+		t.Fatal("should block hidden table access via CASE WHEN subquery")
+	}
+}

@@ -184,6 +184,11 @@ blocked_functions:
   - setval
   - nextval
   - currval
+  - pg_get_serial_sequence
+
+  # ── Large Object Read ──
+  - lo_get
+  - lo_put
 
   # ── System Info ──
   - aclexplode
@@ -197,6 +202,11 @@ blocked_functions:
   - pg_get_userbyid
   - pg_identify_object*
   - format
+  - pg_relation_filenode
+  - pg_filenode_relation
+  - pg_size_pretty
+  - pg_size_bytes
+  - pg_stat_get_backend_*
 
 # Custom security profiles (optional — built-in profiles always available)
 # Built-in profiles: permissive, standard, strict

@@ -418,6 +418,39 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	tables := parsed.Tables
 	functions := parsed.Functions
 
+	// ── AST parse failure: enhanced regex checks + fail-closed for non-permissive ──
+	// When the AST parser fails, the query is either invalid SQL (Postgres would
+	// reject it anyway) or deliberately obfuscated. Either way, it's suspicious.
+	if !parsed.UsedAST && identity != nil {
+		// Enhanced regex: detect regproc casts, blocked functions, multi-statement
+		if v := regexFallbackCheck(identity, query, operation, cfg, pid); v != nil {
+			return v
+		}
+		// For non-permissive profiles, fail-closed on AST parse failure
+		agentPolicy, agentExists := cfg.Agents[identity.AgentID]
+		if agentExists {
+			isPermissive := false
+			if agentPolicy.Profile != "" {
+				profile := ResolveProfile(agentPolicy.Profile, cfg)
+				if profile != nil && profile.Name == "permissive" {
+					isPermissive = true
+				}
+			}
+			if !isPermissive {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "ast_parse_failed",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+	}
+
 	// Unidentified connection — full query analysis, then policy decision
 	if identity == nil {
 		if cfg.Unidentified.Policy == "deny" {
@@ -817,6 +850,124 @@ func (pe *PolicyEngine) EnforceOnConnection(db *sql.DB, conn AgentConnection) *P
 }
 
 // ── SQL Parsing (regex-based fallback for when AST fails) ──
+
+// regprocRe matches regproc/regprocedure/regclass/regtype casts in raw SQL text
+var regprocRe = regexp.MustCompile(`(?i)::\s*(?:regproc|regprocedure|regclass|regtype|regoper|regoperator)\b`)
+
+// multiStmtDangerousRe matches a semicolon followed by dangerous operations
+var multiStmtDangerousRe = regexp.MustCompile(`(?i);\s*(?:GRANT|REVOKE|DROP|TRUNCATE|ALTER|CREATE|DELETE|UPDATE|INSERT|COPY|DO|CALL)\b`)
+
+// regexFallbackCheck performs enhanced security checks on raw SQL text when AST parsing fails.
+// Returns a violation if suspicious patterns are found, nil otherwise.
+func regexFallbackCheck(identity *AgentIdentity, query string, operation string, cfg *PolicyConfig, pid int) *PolicyViolation {
+	upper := strings.ToUpper(query)
+
+	// Check for regproc/regprocedure casts
+	if regprocRe.MatchString(query) {
+		return &PolicyViolation{
+			AgentID:   identity.AgentID,
+			MissionID: identity.MissionID,
+			Query:     truncateQuery(query),
+			Reason:    "blocked_regproc_cast",
+			Operation: operation,
+			PID:       pid,
+			Action:    "pending",
+			Timestamp: time.Now(),
+		}
+	}
+
+	// Check for multi-statement with dangerous second statement
+	if multiStmtDangerousRe.MatchString(query) {
+		return &PolicyViolation{
+			AgentID:   identity.AgentID,
+			MissionID: identity.MissionID,
+			Query:     truncateQuery(query),
+			Reason:    "multi_statement_blocked",
+			Operation: operation,
+			PID:       pid,
+			Action:    "pending",
+			Timestamp: time.Now(),
+		}
+	}
+
+	// Check for blocked functions in raw query text
+	if len(cfg.BlockedFunctions) > 0 {
+		// Extract potential function calls using a simple word boundary match
+		queryLower := strings.ToLower(query)
+		for _, blocked := range cfg.BlockedFunctions {
+			blockedLower := strings.ToLower(blocked)
+			if strings.HasSuffix(blockedLower, "*") {
+				prefix := strings.TrimSuffix(blockedLower, "*")
+				if strings.Contains(queryLower, prefix) {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "blocked_function:" + blocked,
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			} else {
+				// Check for function name followed by '(' or preceded by '.'
+				if strings.Contains(queryLower, blockedLower+"(") ||
+					strings.Contains(queryLower, "."+blockedLower+"(") ||
+					strings.Contains(queryLower, "."+blockedLower+" ") {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "blocked_function:" + blocked,
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			}
+		}
+	}
+
+	// Check for blocked tables in raw query text
+	agentPolicy, agentExists := cfg.Agents[identity.AgentID]
+	if agentExists {
+		for _, blocked := range agentPolicy.BlockedTables {
+			blockedLower := strings.ToLower(blocked)
+			if strings.HasSuffix(blockedLower, ".*") {
+				prefix := strings.TrimSuffix(blockedLower, "*")
+				if strings.Contains(strings.ToLower(query), prefix) {
+					return &PolicyViolation{
+						AgentID:   identity.AgentID,
+						MissionID: identity.MissionID,
+						Query:     truncateQuery(query),
+						Reason:    "blocked_table",
+						Table:     blocked,
+						Operation: operation,
+						PID:       pid,
+						Action:    "pending",
+						Timestamp: time.Now(),
+					}
+				}
+			} else if strings.Contains(upper, strings.ToUpper(blocked)) {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_table",
+					Table:     blocked,
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+	}
+
+	return nil
+}
 
 // ExtractSQLOperationRegex returns the SQL operation type using regex (fallback)
 func ExtractSQLOperationRegex(query string) string {
