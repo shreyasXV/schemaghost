@@ -13,6 +13,7 @@ type ParsedQuery struct {
 	Operations     []string // all operations found (multi-statement support)
 	Tables         []string
 	Functions      []string
+	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	HasRegprocCast bool // true if query contains ::regproc/::regprocedure cast
 	UsedAST        bool
 }
@@ -90,6 +91,7 @@ func ParseQuery(query string) *ParsedQuery {
 
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
+		extractServerInfoFuncs(stmt, &pq.ServerInfoFuncs)
 
 		// Detect dangerous type casts (regproc, regprocedure, regclass)
 		if !pq.HasRegprocCast {
@@ -105,6 +107,7 @@ func ParseQuery(query string) *ParsedQuery {
 	// Deduplicate tables and functions
 	pq.Tables = dedup(pq.Tables)
 	pq.Functions = dedup(pq.Functions)
+	pq.ServerInfoFuncs = dedup(pq.ServerInfoFuncs)
 
 	return pq
 }
@@ -1550,6 +1553,150 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		if bt.Arg != nil {
 			extractFunctionsFromNode(bt.Arg, functions)
 		}
+	}
+}
+
+// sqlValueFuncNames maps pg_query SQLValueFunction ops to human-readable names.
+var sqlValueFuncNames = map[pg_query.SQLValueFunctionOp]string{
+	pg_query.SQLValueFunctionOp_SVFOP_CURRENT_USER:    "current_user",
+	pg_query.SQLValueFunctionOp_SVFOP_SESSION_USER:    "session_user",
+	pg_query.SQLValueFunctionOp_SVFOP_CURRENT_CATALOG: "current_catalog",
+	pg_query.SQLValueFunctionOp_SVFOP_CURRENT_SCHEMA:  "current_schema",
+	pg_query.SQLValueFunctionOp_SVFOP_USER:            "user",
+	pg_query.SQLValueFunctionOp_SVFOP_CURRENT_ROLE:    "current_role",
+}
+
+// extractServerInfoFuncs recursively finds SQLValueFunction nodes in the AST.
+func extractServerInfoFuncs(node *pg_query.Node, funcs *[]string) {
+	if node == nil {
+		return
+	}
+
+	if svf := node.GetSqlvalueFunction(); svf != nil {
+		if name, ok := sqlValueFuncNames[svf.Op]; ok {
+			*funcs = append(*funcs, name)
+		}
+	}
+
+	// Recurse into all child nodes
+	if sel := node.GetSelectStmt(); sel != nil {
+		for _, tgt := range sel.TargetList {
+			extractServerInfoFuncs(tgt, funcs)
+		}
+		if sel.WhereClause != nil {
+			extractServerInfoFuncs(sel.WhereClause, funcs)
+		}
+		for _, from := range sel.FromClause {
+			extractServerInfoFuncs(from, funcs)
+		}
+		for _, sc := range sel.SortClause {
+			extractServerInfoFuncs(sc, funcs)
+		}
+		if sel.HavingClause != nil {
+			extractServerInfoFuncs(sel.HavingClause, funcs)
+		}
+		if sel.LimitCount != nil {
+			extractServerInfoFuncs(sel.LimitCount, funcs)
+		}
+		if sel.LimitOffset != nil {
+			extractServerInfoFuncs(sel.LimitOffset, funcs)
+		}
+		for _, gc := range sel.GroupClause {
+			extractServerInfoFuncs(gc, funcs)
+		}
+		for _, wc := range sel.WindowClause {
+			extractServerInfoFuncs(wc, funcs)
+		}
+		for _, dc := range sel.DistinctClause {
+			extractServerInfoFuncs(dc, funcs)
+		}
+		if sel.Larg != nil {
+			extractServerInfoFuncs(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Larg}}, funcs)
+		}
+		if sel.Rarg != nil {
+			extractServerInfoFuncs(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Rarg}}, funcs)
+		}
+	}
+	if rt := node.GetResTarget(); rt != nil {
+		if rt.Val != nil {
+			extractServerInfoFuncs(rt.Val, funcs)
+		}
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			extractServerInfoFuncs(arg, funcs)
+		}
+	}
+	if ae := node.GetAExpr(); ae != nil {
+		extractServerInfoFuncs(ae.Lexpr, funcs)
+		extractServerInfoFuncs(ae.Rexpr, funcs)
+	}
+	if be := node.GetBoolExpr(); be != nil {
+		for _, arg := range be.Args {
+			extractServerInfoFuncs(arg, funcs)
+		}
+	}
+	if ce := node.GetCaseExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			extractServerInfoFuncs(arg, funcs)
+		}
+		extractServerInfoFuncs(ce.Defresult, funcs)
+	}
+	if cw := node.GetCaseWhen(); cw != nil {
+		extractServerInfoFuncs(cw.Expr, funcs)
+		extractServerInfoFuncs(cw.Result, funcs)
+	}
+	if tc := node.GetTypeCast(); tc != nil {
+		extractServerInfoFuncs(tc.Arg, funcs)
+	}
+	if sl := node.GetSubLink(); sl != nil {
+		extractServerInfoFuncs(sl.Subselect, funcs)
+		extractServerInfoFuncs(sl.Testexpr, funcs)
+	}
+	if co := node.GetCoalesceExpr(); co != nil {
+		for _, arg := range co.Args {
+			extractServerInfoFuncs(arg, funcs)
+		}
+	}
+	if re := node.GetRowExpr(); re != nil {
+		for _, arg := range re.Args {
+			extractServerInfoFuncs(arg, funcs)
+		}
+	}
+	if aa := node.GetAArrayExpr(); aa != nil {
+		for _, elem := range aa.Elements {
+			extractServerInfoFuncs(elem, funcs)
+		}
+	}
+	if na := node.GetNamedArgExpr(); na != nil {
+		extractServerInfoFuncs(na.Arg, funcs)
+	}
+	if bt := node.GetBooleanTest(); bt != nil {
+		extractServerInfoFuncs(bt.Arg, funcs)
+	}
+	if list := node.GetList(); list != nil {
+		for _, item := range list.Items {
+			extractServerInfoFuncs(item, funcs)
+		}
+	}
+	if sb := node.GetSortBy(); sb != nil {
+		extractServerInfoFuncs(sb.Node, funcs)
+	}
+	if wd := node.GetWindowDef(); wd != nil {
+		for _, pc := range wd.PartitionClause {
+			extractServerInfoFuncs(pc, funcs)
+		}
+		for _, oc := range wd.OrderClause {
+			extractServerInfoFuncs(oc, funcs)
+		}
+	}
+	if je := node.GetJoinExpr(); je != nil {
+		extractServerInfoFuncs(je.Larg, funcs)
+		extractServerInfoFuncs(je.Rarg, funcs)
+		extractServerInfoFuncs(je.Quals, funcs)
+	}
+	if nt := node.GetNullTest(); nt != nil {
+		extractServerInfoFuncs(nt.Arg, funcs)
 	}
 }
 

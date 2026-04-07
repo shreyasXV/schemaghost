@@ -418,6 +418,12 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	tables := parsed.Tables
 	functions := parsed.Functions
 
+	// Treat server info functions (current_user, session_user, etc.) as blocked functions
+	// on non-permissive profiles — they leak server identity/role information.
+	if len(parsed.ServerInfoFuncs) > 0 {
+		functions = append(functions, parsed.ServerInfoFuncs...)
+	}
+
 	// ── AST parse failure: enhanced regex checks + fail-closed for non-permissive ──
 	// When the AST parser fails, the query is either invalid SQL (Postgres would
 	// reject it anyway) or deliberately obfuscated. Either way, it's suspicious.

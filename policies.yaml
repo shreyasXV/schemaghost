@@ -75,6 +75,15 @@ blocked_functions:
   - inet_server_port
   - inet_client_addr
   - inet_client_port
+  - current_database
+
+  # ── Server Identity (SQLValueFunction keywords) ──
+  - current_user
+  - session_user
+  - current_catalog
+  - current_schema
+  - current_role
+  - user
 
   # ── Internal Stats (bulk prefix) ──
   - pg_stat_get_*
