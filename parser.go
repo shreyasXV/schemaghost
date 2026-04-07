@@ -966,6 +966,13 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(arg, tables)
 		}
 	}
+
+	// List — generic list node (used in BETWEEN rexpr, IN-lists, etc.)
+	if list := node.GetList(); list != nil {
+		for _, item := range list.Items {
+			extractTablesFromNode(item, tables)
+		}
+	}
 }
 
 // extractFunctionsFromNode recursively extracts all function calls from the AST
@@ -1474,6 +1481,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 		for _, arg := range xe.NamedArgs {
 			extractFunctionsFromNode(arg, functions)
+		}
+	}
+
+	// List — generic list node (used in BETWEEN rexpr, IN-lists, etc.)
+	if list := node.GetList(); list != nil {
+		for _, item := range list.Items {
+			extractFunctionsFromNode(item, functions)
 		}
 	}
 }

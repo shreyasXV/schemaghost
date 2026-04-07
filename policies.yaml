@@ -180,6 +180,22 @@ blocked_functions:
   - encode
   - decode
 
+  # ── OID / Catalog Recon (table existence probing) ──
+  - to_regclass
+  - to_regtype
+  - to_regproc
+  - to_regprocedure
+  - to_regoper
+  - to_regoperator
+  - to_regnamespace
+  - to_regrole
+  - pg_relation_is_updatable
+  - pg_column_is_updatable
+  - pg_table_is_visible
+  - pg_type_is_visible
+  - pg_function_is_visible
+  - pg_operator_is_visible
+
   # ── Sequence Manipulation ──
   - setval
   - nextval
