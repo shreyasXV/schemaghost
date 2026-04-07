@@ -606,6 +606,32 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
+	// RangeTableFunc (XMLTABLE in FROM clause)
+	if rtf := node.GetRangeTableFunc(); rtf != nil {
+		if rtf.Docexpr != nil {
+			extractTablesFromNode(rtf.Docexpr, tables)
+		}
+		if rtf.Rowexpr != nil {
+			extractTablesFromNode(rtf.Rowexpr, tables)
+		}
+		for _, ns := range rtf.Namespaces {
+			extractTablesFromNode(ns, tables)
+		}
+		for _, col := range rtf.Columns {
+			extractTablesFromNode(col, tables)
+		}
+	}
+
+	// RangeTableFuncCol (column definition inside XMLTABLE)
+	if rtfc := node.GetRangeTableFuncCol(); rtfc != nil {
+		if rtfc.Colexpr != nil {
+			extractTablesFromNode(rtfc.Colexpr, tables)
+		}
+		if rtfc.Coldefexpr != nil {
+			extractTablesFromNode(rtfc.Coldefexpr, tables)
+		}
+	}
+
 	// A_Indirection — array subscript (expr)[n], field access expr.field
 	if ai := node.GetAIndirection(); ai != nil {
 		if ai.Arg != nil {
@@ -1159,6 +1185,29 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	// RangeSubselect
 	if rsub := node.GetRangeSubselect(); rsub != nil {
 		extractFunctionsFromNode(rsub.Subquery, functions)
+	}
+
+	// RangeTableFunc (XMLTABLE in FROM clause)
+	if rtf := node.GetRangeTableFunc(); rtf != nil {
+		if rtf.Docexpr != nil {
+			extractFunctionsFromNode(rtf.Docexpr, functions)
+		}
+		if rtf.Rowexpr != nil {
+			extractFunctionsFromNode(rtf.Rowexpr, functions)
+		}
+		for _, col := range rtf.Columns {
+			extractFunctionsFromNode(col, functions)
+		}
+	}
+
+	// RangeTableFuncCol (column definition inside XMLTABLE)
+	if rtfc := node.GetRangeTableFuncCol(); rtfc != nil {
+		if rtfc.Colexpr != nil {
+			extractFunctionsFromNode(rtfc.Colexpr, functions)
+		}
+		if rtfc.Coldefexpr != nil {
+			extractFunctionsFromNode(rtfc.Coldefexpr, functions)
+		}
 	}
 
 	// ResTarget
