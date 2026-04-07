@@ -973,9 +973,14 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			extractTablesFromNode(item, tables)
 		}
 	}
-}
 
-// extractFunctionsFromNode recursively extracts all function calls from the AST
+	// BooleanTest — IS TRUE / IS FALSE / IS NOT NULL / IS UNKNOWN
+	if bt := node.GetBooleanTest(); bt != nil {
+		if bt.Arg != nil {
+			extractTablesFromNode(bt.Arg, tables)
+		}
+	}
+}
 func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	if node == nil {
 		return
@@ -1488,6 +1493,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	if list := node.GetList(); list != nil {
 		for _, item := range list.Items {
 			extractFunctionsFromNode(item, functions)
+		}
+	}
+
+	// BooleanTest — IS TRUE / IS FALSE / IS NOT NULL / IS UNKNOWN
+	if bt := node.GetBooleanTest(); bt != nil {
+		if bt.Arg != nil {
+			extractFunctionsFromNode(bt.Arg, functions)
 		}
 	}
 }
