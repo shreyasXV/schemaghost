@@ -905,10 +905,24 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
-	// ArrayExpr — ARRAY[expr, ...] constructor
+	// ArrayExpr — resolved ARRAY constructor (post-analysis)
 	if ae := node.GetArrayExpr(); ae != nil {
 		for _, elem := range ae.Elements {
 			extractTablesFromNode(elem, tables)
+		}
+	}
+
+	// A_ArrayExpr — parsed ARRAY[expr, ...] constructor (pre-analysis, this is what the parser produces)
+	if aa := node.GetAArrayExpr(); aa != nil {
+		for _, elem := range aa.Elements {
+			extractTablesFromNode(elem, tables)
+		}
+	}
+
+	// NamedArgExpr — function(name => expr) named parameter
+	if na := node.GetNamedArgExpr(); na != nil {
+		if na.Arg != nil {
+			extractTablesFromNode(na.Arg, tables)
 		}
 	}
 
@@ -1401,10 +1415,24 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 	}
 
-	// ArrayExpr — ARRAY[expr, ...] constructor
+	// ArrayExpr — resolved ARRAY constructor (post-analysis)
 	if ae := node.GetArrayExpr(); ae != nil {
 		for _, elem := range ae.Elements {
 			extractFunctionsFromNode(elem, functions)
+		}
+	}
+
+	// A_ArrayExpr — parsed ARRAY[expr, ...] constructor (pre-analysis)
+	if aa := node.GetAArrayExpr(); aa != nil {
+		for _, elem := range aa.Elements {
+			extractFunctionsFromNode(elem, functions)
+		}
+	}
+
+	// NamedArgExpr — function(name => expr) named parameter
+	if na := node.GetNamedArgExpr(); na != nil {
+		if na.Arg != nil {
+			extractFunctionsFromNode(na.Arg, functions)
 		}
 	}
 
