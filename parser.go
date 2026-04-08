@@ -9,13 +9,24 @@ import (
 
 // ParsedQuery holds AST-extracted information about a SQL query
 type ParsedQuery struct {
-	Operation      string   // first statement's operation (backward compat)
-	Operations     []string // all operations found (multi-statement support)
-	Tables         []string
-	Functions      []string
+	Operation       string   // first statement's operation (backward compat)
+	Operations      []string // all operations found (multi-statement support)
+	Tables          []string
+	Functions       []string
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
-	HasRegprocCast bool // true if query contains ::regproc/::regprocedure cast
-	UsedAST        bool
+	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
+	HasRegprocCast  bool     // true if query contains ::regproc/::regprocedure cast
+	UsedAST         bool
+}
+
+// systemColumnNames are Postgres hidden system columns that leak internal metadata.
+var systemColumnNames = map[string]bool{
+	"ctid":     true,
+	"xmin":     true,
+	"xmax":     true,
+	"cmin":     true,
+	"cmax":     true,
+	"tableoid": true,
 }
 
 // sanitizeQuery strips null bytes, zero-width characters, and other Unicode tricks
@@ -92,6 +103,7 @@ func ParseQuery(query string) *ParsedQuery {
 		extractTablesFromNode(stmt, &pq.Tables)
 		extractFunctionsFromNode(stmt, &pq.Functions)
 		extractServerInfoFuncs(stmt, &pq.ServerInfoFuncs)
+		extractSystemColumns(stmt, &pq.SystemColumns)
 
 		// Detect dangerous type casts (regproc, regprocedure, regclass)
 		if !pq.HasRegprocCast {
@@ -108,6 +120,7 @@ func ParseQuery(query string) *ParsedQuery {
 	pq.Tables = dedup(pq.Tables)
 	pq.Functions = dedup(pq.Functions)
 	pq.ServerInfoFuncs = dedup(pq.ServerInfoFuncs)
+	pq.SystemColumns = dedup(pq.SystemColumns)
 
 	return pq
 }
@@ -1697,6 +1710,119 @@ func extractServerInfoFuncs(node *pg_query.Node, funcs *[]string) {
 	}
 	if nt := node.GetNullTest(); nt != nil {
 		extractServerInfoFuncs(nt.Arg, funcs)
+	}
+}
+
+// extractSystemColumns recursively finds references to Postgres system columns
+// (ctid, xmin, xmax, cmin, cmax, tableoid) in the AST.
+func extractSystemColumns(node *pg_query.Node, cols *[]string) {
+	if node == nil {
+		return
+	}
+
+	// ColumnRef — check if it's a system column
+	if cr := node.GetColumnRef(); cr != nil {
+		for _, field := range cr.Fields {
+			if s := field.GetString_(); s != nil {
+				if systemColumnNames[strings.ToLower(s.Sval)] {
+					*cols = append(*cols, strings.ToLower(s.Sval))
+				}
+			}
+		}
+	}
+
+	// Recurse into SelectStmt
+	if sel := node.GetSelectStmt(); sel != nil {
+		for _, tgt := range sel.TargetList {
+			extractSystemColumns(tgt, cols)
+		}
+		if sel.WhereClause != nil {
+			extractSystemColumns(sel.WhereClause, cols)
+		}
+		for _, from := range sel.FromClause {
+			extractSystemColumns(from, cols)
+		}
+		for _, sc := range sel.SortClause {
+			extractSystemColumns(sc, cols)
+		}
+		if sel.HavingClause != nil {
+			extractSystemColumns(sel.HavingClause, cols)
+		}
+		if sel.LimitCount != nil {
+			extractSystemColumns(sel.LimitCount, cols)
+		}
+		if sel.LimitOffset != nil {
+			extractSystemColumns(sel.LimitOffset, cols)
+		}
+		for _, gc := range sel.GroupClause {
+			extractSystemColumns(gc, cols)
+		}
+		for _, wc := range sel.WindowClause {
+			extractSystemColumns(wc, cols)
+		}
+		for _, dc := range sel.DistinctClause {
+			extractSystemColumns(dc, cols)
+		}
+		if sel.Larg != nil {
+			extractSystemColumns(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Larg}}, cols)
+		}
+		if sel.Rarg != nil {
+			extractSystemColumns(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Rarg}}, cols)
+		}
+	}
+	if rt := node.GetResTarget(); rt != nil {
+		if rt.Val != nil {
+			extractSystemColumns(rt.Val, cols)
+		}
+	}
+	if ae := node.GetAExpr(); ae != nil {
+		extractSystemColumns(ae.Lexpr, cols)
+		extractSystemColumns(ae.Rexpr, cols)
+	}
+	if be := node.GetBoolExpr(); be != nil {
+		for _, arg := range be.Args {
+			extractSystemColumns(arg, cols)
+		}
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			extractSystemColumns(arg, cols)
+		}
+	}
+	if tc := node.GetTypeCast(); tc != nil {
+		extractSystemColumns(tc.Arg, cols)
+	}
+	if sl := node.GetSubLink(); sl != nil {
+		extractSystemColumns(sl.Subselect, cols)
+		extractSystemColumns(sl.Testexpr, cols)
+	}
+	if je := node.GetJoinExpr(); je != nil {
+		extractSystemColumns(je.Larg, cols)
+		extractSystemColumns(je.Rarg, cols)
+		extractSystemColumns(je.Quals, cols)
+	}
+	if sb := node.GetSortBy(); sb != nil {
+		extractSystemColumns(sb.Node, cols)
+	}
+	if ce := node.GetCaseExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			extractSystemColumns(arg, cols)
+		}
+		extractSystemColumns(ce.Defresult, cols)
+	}
+	if cw := node.GetCaseWhen(); cw != nil {
+		extractSystemColumns(cw.Expr, cols)
+		extractSystemColumns(cw.Result, cols)
+	}
+	if co := node.GetCoalesceExpr(); co != nil {
+		for _, arg := range co.Args {
+			extractSystemColumns(arg, cols)
+		}
+	}
+	if list := node.GetList(); list != nil {
+		for _, item := range list.Items {
+			extractSystemColumns(item, cols)
+		}
 	}
 }
 
