@@ -541,6 +541,20 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		if ins.SelectStmt != nil {
 			extractTablesFromNode(ins.SelectStmt, tables)
 		}
+		// RETURNING clause can contain subqueries against other tables
+		for _, ret := range ins.ReturningList {
+			extractTablesFromNode(ret, tables)
+		}
+		// ON CONFLICT ... DO UPDATE SET ... can reference other tables
+		if ins.OnConflictClause != nil {
+			oc := ins.OnConflictClause
+			for _, tgt := range oc.TargetList {
+				extractTablesFromNode(tgt, tables)
+			}
+			if oc.WhereClause != nil {
+				extractTablesFromNode(oc.WhereClause, tables)
+			}
+		}
 	}
 
 	// UpdateStmt
@@ -550,11 +564,19 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 			rv.Node = &pg_query.Node_RangeVar{RangeVar: upd.Relation}
 			extractTablesFromNode(rv, tables)
 		}
+		// SET clause — values can contain subqueries
+		for _, tgt := range upd.TargetList {
+			extractTablesFromNode(tgt, tables)
+		}
 		for _, from := range upd.FromClause {
 			extractTablesFromNode(from, tables)
 		}
 		if upd.WhereClause != nil {
 			extractTablesFromNode(upd.WhereClause, tables)
+		}
+		// RETURNING clause
+		for _, ret := range upd.ReturningList {
+			extractTablesFromNode(ret, tables)
 		}
 	}
 
@@ -567,6 +589,14 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 		if del.WhereClause != nil {
 			extractTablesFromNode(del.WhereClause, tables)
+		}
+		// RETURNING clause
+		for _, ret := range del.ReturningList {
+			extractTablesFromNode(ret, tables)
+		}
+		// USING clause
+		for _, using := range del.UsingClause {
+			extractTablesFromNode(using, tables)
 		}
 	}
 
@@ -1170,6 +1200,17 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		if ins.SelectStmt != nil {
 			extractFunctionsFromNode(ins.SelectStmt, functions)
 		}
+		for _, ret := range ins.ReturningList {
+			extractFunctionsFromNode(ret, functions)
+		}
+		if ins.OnConflictClause != nil {
+			for _, tgt := range ins.OnConflictClause.TargetList {
+				extractFunctionsFromNode(tgt, functions)
+			}
+			if ins.OnConflictClause.WhereClause != nil {
+				extractFunctionsFromNode(ins.OnConflictClause.WhereClause, functions)
+			}
+		}
 	}
 
 	if upd := node.GetUpdateStmt(); upd != nil {
@@ -1182,11 +1223,20 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		for _, from := range upd.FromClause {
 			extractFunctionsFromNode(from, functions)
 		}
+		for _, ret := range upd.ReturningList {
+			extractFunctionsFromNode(ret, functions)
+		}
 	}
 
 	if del := node.GetDeleteStmt(); del != nil {
 		if del.WhereClause != nil {
 			extractFunctionsFromNode(del.WhereClause, functions)
+		}
+		for _, ret := range del.ReturningList {
+			extractFunctionsFromNode(ret, functions)
+		}
+		for _, using := range del.UsingClause {
+			extractFunctionsFromNode(using, functions)
 		}
 	}
 
