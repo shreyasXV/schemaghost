@@ -64,6 +64,9 @@ blocked_functions:
   - pg_log_standby_snapshot
   - txid_*
 
+  # ── Schema-qualified pg_catalog calls (block explicit pg_catalog.* usage) ──
+  - pg_catalog.*
+
   # ── Server Info Reconnaissance ──
   - version
   - pg_postmaster_start_time
@@ -82,6 +85,7 @@ blocked_functions:
   - session_user
   - current_catalog
   - current_schema
+  - current_schemas
   - current_role
   - user
 
