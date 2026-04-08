@@ -424,6 +424,32 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		functions = append(functions, parsed.ServerInfoFuncs...)
 	}
 
+	// Block OPERATOR(pg_catalog.*) syntax on non-permissive profiles.
+	if parsed.HasPgCatalogOp && identity != nil {
+		agentPolicy, agentExists := cfg.Agents[identity.AgentID]
+		if agentExists {
+			isPermissive := false
+			if agentPolicy.Profile != "" {
+				profile := ResolveProfile(agentPolicy.Profile, cfg)
+				if profile != nil && profile.Name == "permissive" {
+					isPermissive = true
+				}
+			}
+			if !isPermissive {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "pg_catalog_operator",
+					Operation: operation,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+		}
+	}
+
 	// Block system columns (ctid, xmin, xmax, cmin, cmax, tableoid) on non-permissive profiles.
 	// These leak internal Postgres metadata (physical row locations, transaction IDs, table OIDs).
 	if len(parsed.SystemColumns) > 0 && identity != nil {

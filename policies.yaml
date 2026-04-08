@@ -55,6 +55,13 @@ blocked_functions:
   # ── WAL / Replication (admin-only) ──
   - pg_switch_wal
   - pg_current_wal_*
+  - pg_current_snapshot
+  - pg_current_xact_id*
+  - pg_snapshot_xmin
+  - pg_snapshot_xmax
+  - pg_snapshot_xip
+  - pg_visible_in_snapshot
+  - pg_xact_status
   - pg_walfile_name*
   - pg_wal_replay_*
   - pg_start_backup

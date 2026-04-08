@@ -15,8 +15,9 @@ type ParsedQuery struct {
 	Functions       []string
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
-	HasRegprocCast  bool     // true if query contains ::regproc/::regprocedure cast
-	UsedAST         bool
+	HasRegprocCast      bool // true if query contains ::regproc/::regprocedure cast
+	HasPgCatalogOp      bool // true if query uses OPERATOR(pg_catalog.*) syntax
+	UsedAST             bool
 }
 
 // systemColumnNames are Postgres hidden system columns that leak internal metadata.
@@ -108,6 +109,11 @@ func ParseQuery(query string) *ParsedQuery {
 		// Detect dangerous type casts (regproc, regprocedure, regclass)
 		if !pq.HasRegprocCast {
 			pq.HasRegprocCast = hasRegprocCast(stmt)
+		}
+
+		// Detect OPERATOR(pg_catalog.*) syntax
+		if !pq.HasPgCatalogOp {
+			pq.HasPgCatalogOp = hasPgCatalogOperator(stmt)
 		}
 	}
 
@@ -1824,6 +1830,63 @@ func extractSystemColumns(node *pg_query.Node, cols *[]string) {
 			extractSystemColumns(item, cols)
 		}
 	}
+
+	// XmlExpr — XMLELEMENT, XMLFOREST can wrap system columns
+	if xe := node.GetXmlExpr(); xe != nil {
+		for _, arg := range xe.Args {
+			extractSystemColumns(arg, cols)
+		}
+		for _, arg := range xe.NamedArgs {
+			extractSystemColumns(arg, cols)
+		}
+	}
+}
+
+// hasPgCatalogOperator recursively checks if the AST contains OPERATOR(pg_catalog.*) syntax.
+func hasPgCatalogOperator(node *pg_query.Node) bool {
+	if node == nil {
+		return false
+	}
+
+	if ae := node.GetAExpr(); ae != nil {
+		for _, nameNode := range ae.Name {
+			if s := nameNode.GetString_(); s != nil {
+				if strings.ToLower(s.Sval) == "pg_catalog" {
+					return true
+				}
+			}
+		}
+		if hasPgCatalogOperator(ae.Lexpr) || hasPgCatalogOperator(ae.Rexpr) {
+			return true
+		}
+	}
+	if sel := node.GetSelectStmt(); sel != nil {
+		for _, tgt := range sel.TargetList {
+			if hasPgCatalogOperator(tgt) { return true }
+		}
+		if hasPgCatalogOperator(sel.WhereClause) { return true }
+		for _, sc := range sel.SortClause {
+			if hasPgCatalogOperator(sc) { return true }
+		}
+		if hasPgCatalogOperator(sel.HavingClause) { return true }
+	}
+	if rt := node.GetResTarget(); rt != nil {
+		if hasPgCatalogOperator(rt.Val) { return true }
+	}
+	if be := node.GetBoolExpr(); be != nil {
+		for _, arg := range be.Args {
+			if hasPgCatalogOperator(arg) { return true }
+		}
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			if hasPgCatalogOperator(arg) { return true }
+		}
+	}
+	if sl := node.GetSubLink(); sl != nil {
+		if hasPgCatalogOperator(sl.Subselect) || hasPgCatalogOperator(sl.Testexpr) { return true }
+	}
+	return false
 }
 
 // dangerousTypeNames are type names that allow function/table OID resolution
