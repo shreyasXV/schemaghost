@@ -521,8 +521,10 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 }
 
 // extractParseMessage extracts statement name and query from a Parse message payload.
+// Handles null-byte injection: validates the trailing parameter section structure
+// to find the true query terminator, then replaces embedded null bytes with spaces.
 func extractParseMessage(payload []byte) (stmtName, query string) {
-	// Format: stmt_name \0 query \0 [param count + OIDs]
+	// Format: stmt_name \0 query \0 [int16 param_count] [int32 OID ...]
 	nameEnd := indexOf(payload, 0)
 	if nameEnd < 0 {
 		return "", ""
@@ -530,11 +532,51 @@ func extractParseMessage(payload []byte) (stmtName, query string) {
 	stmtName = string(payload[:nameEnd])
 
 	rest := payload[nameEnd+1:]
-	queryEnd := indexOf(rest, 0)
-	if queryEnd < 0 {
-		return stmtName, ""
+
+	// Find the correct query terminator by scanning for null bytes and
+	// validating that the remaining bytes form a valid parameter section:
+	// exactly 2 + paramCount*4 bytes.
+	bestIdx := -1
+	for i := 0; i < len(rest); i++ {
+		if rest[i] != 0 {
+			continue
+		}
+		remaining := rest[i+1:]
+		if len(remaining) == 0 {
+			bestIdx = i
+			continue
+		}
+		if len(remaining) < 2 {
+			continue
+		}
+		paramCount := int(binary.BigEndian.Uint16(remaining[:2]))
+		expectedLen := 2 + paramCount*4
+		if len(remaining) == expectedLen {
+			bestIdx = i
+			break // found the structurally valid terminator
+		}
 	}
-	query = string(rest[:queryEnd])
+
+	if bestIdx < 0 {
+		// Fallback: use first null byte (original behavior)
+		queryEnd := indexOf(rest, 0)
+		if queryEnd < 0 {
+			return stmtName, ""
+		}
+		query = string(rest[:queryEnd])
+		return stmtName, query
+	}
+
+	// Extract query bytes up to the true terminator, replacing any
+	// embedded null bytes with spaces to neutralize injection.
+	raw := make([]byte, bestIdx)
+	copy(raw, rest[:bestIdx])
+	for i := range raw {
+		if raw[i] == 0 {
+			raw[i] = ' '
+		}
+	}
+	query = string(raw)
 	return stmtName, query
 }
 
