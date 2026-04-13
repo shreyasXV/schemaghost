@@ -600,6 +600,51 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 		}
 	}
 
+	// MergeStmt — MERGE INTO ... USING ... ON ... WHEN MATCHED/NOT MATCHED
+	if merge := node.GetMergeStmt(); merge != nil {
+		if merge.Relation != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: merge.Relation}
+			extractTablesFromNode(rv, tables)
+		}
+		if merge.SourceRelation != nil {
+			extractTablesFromNode(merge.SourceRelation, tables)
+		}
+		if merge.JoinCondition != nil {
+			extractTablesFromNode(merge.JoinCondition, tables)
+		}
+		for _, when := range merge.MergeWhenClauses {
+			if mwc := when.GetMergeWhenClause(); mwc != nil {
+				if mwc.Condition != nil {
+					extractTablesFromNode(mwc.Condition, tables)
+				}
+				for _, tgt := range mwc.TargetList {
+					extractTablesFromNode(tgt, tables)
+				}
+				for _, val := range mwc.Values {
+					extractTablesFromNode(val, tables)
+				}
+			}
+		}
+		for _, ret := range merge.ReturningList {
+			extractTablesFromNode(ret, tables)
+		}
+		if merge.WithClause != nil {
+			for _, cte := range merge.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractTablesFromNode(c.Ctequery, tables)
+				}
+			}
+		}
+	}
+
+	// CoerceToDomain — domain casts can wrap expressions containing subqueries
+	if ctd := node.GetCoerceToDomain(); ctd != nil {
+		if ctd.Arg != nil {
+			extractTablesFromNode(ctd.Arg, tables)
+		}
+	}
+
 	// DropStmt
 	if drop := node.GetDropStmt(); drop != nil {
 		for _, obj := range drop.Objects {
@@ -1237,6 +1282,39 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 		}
 		for _, using := range del.UsingClause {
 			extractFunctionsFromNode(using, functions)
+		}
+	}
+
+	// MergeStmt
+	if merge := node.GetMergeStmt(); merge != nil {
+		if merge.SourceRelation != nil {
+			extractFunctionsFromNode(merge.SourceRelation, functions)
+		}
+		if merge.JoinCondition != nil {
+			extractFunctionsFromNode(merge.JoinCondition, functions)
+		}
+		for _, when := range merge.MergeWhenClauses {
+			if mwc := when.GetMergeWhenClause(); mwc != nil {
+				if mwc.Condition != nil {
+					extractFunctionsFromNode(mwc.Condition, functions)
+				}
+				for _, tgt := range mwc.TargetList {
+					extractFunctionsFromNode(tgt, functions)
+				}
+				for _, val := range mwc.Values {
+					extractFunctionsFromNode(val, functions)
+				}
+			}
+		}
+		for _, ret := range merge.ReturningList {
+			extractFunctionsFromNode(ret, functions)
+		}
+	}
+
+	// CoerceToDomain
+	if ctd := node.GetCoerceToDomain(); ctd != nil {
+		if ctd.Arg != nil {
+			extractFunctionsFromNode(ctd.Arg, functions)
 		}
 	}
 
