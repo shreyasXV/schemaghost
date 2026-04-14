@@ -127,6 +127,51 @@ func handleViolations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAgentStats returns per-agent aggregated metrics
+// GET /api/agents/stats
+func handleAgentStats(w http.ResponseWriter, r *http.Request) {
+	allAgents := agentTracker.GetAllAgents()
+
+	costPerRow := 0.0001 // default $0.0001 per row
+
+	type agentStats struct {
+		AgentID        string  `json:"agent_id"`
+		TotalQueries   int     `json:"total_queries"`
+		TotalRows      int64   `json:"total_rows"`
+		EstimatedCost  float64 `json:"estimated_cost"`
+		TotalDurationMs float64 `json:"total_duration_ms"`
+		AvgDurationMs  float64 `json:"avg_duration_ms"`
+		Violations     int     `json:"violations"`
+		Active         bool    `json:"active"`
+		Paused         bool    `json:"paused"`
+	}
+
+	stats := make([]agentStats, 0, len(allAgents))
+	for _, rec := range allAgents {
+		avgDur := 0.0
+		if rec.TotalQueries > 0 {
+			avgDur = rec.TotalDurationMs / float64(rec.TotalQueries)
+		}
+		stats = append(stats, agentStats{
+			AgentID:        rec.AgentID,
+			TotalQueries:   rec.TotalQueries,
+			TotalRows:      rec.TotalRows,
+			EstimatedCost:  float64(rec.TotalRows) * costPerRow,
+			TotalDurationMs: rec.TotalDurationMs,
+			AvgDurationMs:  avgDur,
+			Violations:     rec.Violations,
+			Active:         rec.Active,
+			Paused:         policyEngine.IsAgentPaused(rec.AgentID),
+		})
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"agents":       stats,
+		"count":        len(stats),
+		"cost_per_row": costPerRow,
+	})
+}
+
 // handleBlockRule adds a blocked query pattern to the agent's policy and persists it
 // POST /api/rules/block
 // Body: {"query_pattern": "...", "agent_id": "..."}

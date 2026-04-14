@@ -315,6 +315,10 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		})
 	}
 
+	// Per-query stats tracking
+	var queryStartTime time.Time
+	queryRowCount := 0
+
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
 		for {
@@ -324,22 +328,25 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				return
 			}
 
-			// Count DataRow ('D') messages for max_rows enforcement
-			if msgType == 'D' && maxRows > 0 && pe.GetEnforcement() == "enforce" {
-				rowCount++
-				if rowCount > maxRows && !rowLimitExceeded {
-					rowLimitExceeded = true
-					log.Printf("%s[BLOCKED]%s %s max_rows limit exceeded (%d rows, limit: %d)",
-						colorRed, colorReset, agentLabel, rowCount, maxRows)
-					pe.addViolation(PolicyViolation{
-						AgentID:   identity.AgentID,
-						MissionID: identity.MissionID,
-						Reason:    fmt.Sprintf("max_rows exceeded (limit: %d)", maxRows),
-						Action:    "blocked",
-						Timestamp: time.Now(),
-					})
-					shutdownConn(fmt.Sprintf("FaultWall: max_rows limit (%d) exceeded for agent %s", maxRows, agentLabel))
-					return
+			// Count DataRow ('D') messages for max_rows enforcement and stats
+			if msgType == 'D' {
+				queryRowCount++
+				if maxRows > 0 && pe.GetEnforcement() == "enforce" {
+					rowCount++
+					if rowCount > maxRows && !rowLimitExceeded {
+						rowLimitExceeded = true
+						log.Printf("%s[BLOCKED]%s %s max_rows limit exceeded (%d rows, limit: %d)",
+							colorRed, colorReset, agentLabel, rowCount, maxRows)
+						pe.addViolation(PolicyViolation{
+							AgentID:   identity.AgentID,
+							MissionID: identity.MissionID,
+							Reason:    fmt.Sprintf("max_rows exceeded (limit: %d)", maxRows),
+							Action:    "blocked",
+							Timestamp: time.Now(),
+						})
+						shutdownConn(fmt.Sprintf("FaultWall: max_rows limit (%d) exceeded for agent %s", maxRows, agentLabel))
+						return
+					}
 				}
 			}
 
@@ -351,6 +358,15 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 			// ReadyForQuery ('Z') = query complete, reset row counter and stop timer
 			if msgType == 'Z' {
+				// Record per-query stats in agent tracker
+				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
+					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
+					agentTracker.RecordRows(identity.AgentID, int64(queryRowCount))
+					agentTracker.RecordDuration(identity.AgentID, durationMs)
+				}
+				queryRowCount = 0
+				queryStartTime = time.Time{}
+
 				rowCount = 0
 				rowLimitExceeded = false
 				if queryTimer != nil {
@@ -479,6 +495,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if err := writeWireMessage(upstream, msgType, payload); err != nil {
 			log.Printf("Proxy: upstream write error: %v", err)
 			return
+		}
+
+		// Track query start time for stats
+		if msgType == 'Q' || msgType == 'E' {
+			queryStartTime = time.Now()
 		}
 
 		// Start query timer for max_query_time_ms enforcement

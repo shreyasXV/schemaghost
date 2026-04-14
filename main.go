@@ -115,6 +115,7 @@ func main() {
 		mux.HandleFunc("/api/violations", handleViolations)
 		mux.HandleFunc("/api/rules/block", handleBlockRule)
 		mux.HandleFunc("/api/agents/pause/", handlePauseAgent)
+		mux.HandleFunc("/api/agents/stats", handleAgentStats)
 
 		apiAddr := fmt.Sprintf("%s:%s", apiBind, apiPort)
 		log.Printf("📊 FaultWall API server on http://%s", apiAddr)
@@ -334,6 +335,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	mux.HandleFunc("/api/violations", bearerAuthMiddleware(handleViolations))
 	mux.HandleFunc("/api/rules/block", bearerAuthMiddleware(handleBlockRule))
 	mux.HandleFunc("/api/agents/pause/", bearerAuthMiddleware(handlePauseAgent))
+	mux.HandleFunc("/api/agents/stats", handleAgentStats)
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)

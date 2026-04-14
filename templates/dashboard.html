@@ -844,6 +844,33 @@
     </div>
   </div>
 
+  <!-- Agent Stats -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📈 Agent Stats</span>
+      <span class="card-subtitle" id="agent-stats-subtitle">Per-agent query, row, and cost metrics</span>
+    </div>
+    <div class="table-wrap">
+      <table id="agent-stats-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th class="num">Queries</th>
+            <th class="num">Rows</th>
+            <th class="num">Est. Cost</th>
+            <th class="num">Total Duration</th>
+            <th class="num">Avg Duration</th>
+            <th class="num">Violations</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="agent-stats-tbody">
+          <tr><td colspan="8" class="empty">Loading agent stats…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Connected Agents -->
   <div class="card">
     <div class="card-header">
@@ -1510,6 +1537,38 @@ function renderViolationChart(violations) {
   }).join('') + '</div>';
 }
 
+// ── Render Agent Stats ────────────────────────────────────────────────
+async function refreshAgentStats() {
+  try {
+    const data = await fetchJSON('/api/agents/stats');
+    const tbody = document.getElementById('agent-stats-tbody');
+    const agents = data.agents || [];
+    if (agents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">No agent data yet</td></tr>';
+      return;
+    }
+    // Sort by total queries descending
+    agents.sort((a, b) => (b.total_queries || 0) - (a.total_queries || 0));
+    tbody.innerHTML = agents.map(a => {
+      const status = a.paused ? '<span style="color:var(--yellow)">⏸ paused</span>'
+        : a.active ? '<span style="color:#38a169">● active</span>'
+        : '<span style="color:var(--muted)">○ inactive</span>';
+      return `<tr>
+        <td><span class="tenant-id">${escHtml(a.agent_id)}</span></td>
+        <td class="num">${fmtNum(a.total_queries)}</td>
+        <td class="num">${fmtNum(a.total_rows)}</td>
+        <td class="num">$${(a.estimated_cost || 0).toFixed(4)}</td>
+        <td class="num">${fmtMs(a.total_duration_ms)}</td>
+        <td class="num">${fmtMs(a.avg_duration_ms)}</td>
+        <td class="num">${a.violations || 0}</td>
+        <td>${status}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('agent-stats-tbody').innerHTML = '<tr><td colspan="8" class="empty">Stats endpoint unavailable</td></tr>';
+  }
+}
+
 // ── Render Connected Agents ────────────────────────────────────────────
 async function refreshAgentConnections() {
   try {
@@ -1580,6 +1639,7 @@ async function refresh() {
     refreshPredictions();
     refreshThrottle();
     refreshViolations();
+    refreshAgentStats();
     refreshAgentConnections();
 
     if (health.pattern) {

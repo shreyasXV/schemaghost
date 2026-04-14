@@ -29,16 +29,18 @@ type AgentConnection struct {
 
 // AgentRecord is a persistent record of an agent that has connected
 type AgentRecord struct {
-	AgentID      string    `json:"agent_id"`
-	LastMission  string    `json:"last_mission"`
-	LastSeen     time.Time `json:"last_seen"`
-	FirstSeen    time.Time `json:"first_seen"`
-	Active       bool      `json:"active"`
-	TotalQueries int       `json:"total_queries"`
-	Violations   int       `json:"violations"`
-	LastPID      int       `json:"last_pid"`
-	LastClientIP string    `json:"last_client_ip"`
-	Username     string    `json:"username"`
+	AgentID        string    `json:"agent_id"`
+	LastMission    string    `json:"last_mission"`
+	LastSeen       time.Time `json:"last_seen"`
+	FirstSeen      time.Time `json:"first_seen"`
+	Active         bool      `json:"active"`
+	TotalQueries   int       `json:"total_queries"`
+	Violations     int       `json:"violations"`
+	LastPID        int       `json:"last_pid"`
+	LastClientIP   string    `json:"last_client_ip"`
+	Username       string    `json:"username"`
+	TotalRows      int64     `json:"total_rows"`
+	TotalDurationMs float64  `json:"total_duration_ms"`
 }
 
 // AgentTracker tracks active and historical agent connections
@@ -211,6 +213,46 @@ func (at *AgentTracker) RecordQuery(agentID string) {
 			FirstSeen:    time.Now(),
 			LastSeen:     time.Now(),
 			TotalQueries: 1,
+		}
+	}
+}
+
+// RecordRows increments the total row count for an agent (called from proxy)
+func (at *AgentTracker) RecordRows(agentID string, rows int64) {
+	if at == nil || rows <= 0 {
+		return
+	}
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if rec, exists := at.agents[agentID]; exists {
+		rec.TotalRows += rows
+	} else {
+		at.agents[agentID] = &AgentRecord{
+			AgentID:   agentID,
+			Active:    true,
+			FirstSeen: time.Now(),
+			LastSeen:  time.Now(),
+			TotalRows: rows,
+		}
+	}
+}
+
+// RecordDuration adds query duration to an agent's total (called from proxy)
+func (at *AgentTracker) RecordDuration(agentID string, durationMs float64) {
+	if at == nil || durationMs <= 0 {
+		return
+	}
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if rec, exists := at.agents[agentID]; exists {
+		rec.TotalDurationMs += durationMs
+	} else {
+		at.agents[agentID] = &AgentRecord{
+			AgentID:         agentID,
+			Active:          true,
+			FirstSeen:       time.Now(),
+			LastSeen:        time.Now(),
+			TotalDurationMs: durationMs,
 		}
 	}
 }
