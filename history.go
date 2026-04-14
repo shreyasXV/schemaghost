@@ -203,6 +203,11 @@ func handleHistoryOverview(w http.ResponseWriter, r *http.Request) {
 // handleExportCSV exports all tenant metrics as CSV
 // GET /api/export/csv
 func handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	if collector == nil {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write([]byte("No data in proxy mode\n"))
+		return
+	}
 	data := collector.GetData()
 
 	w.Header().Set("Content-Type", "text/csv")
@@ -232,6 +237,10 @@ func handleExportCSV(w http.ResponseWriter, r *http.Request) {
 // handleExportJSON exports full CollectorData as JSON download
 // GET /api/export/json
 func handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	if collector == nil {
+		writeJSON(w, map[string]interface{}{"mode": "proxy", "message": "export not available in proxy mode"})
+		return
+	}
 	data := collector.GetData()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"faultwall-export-"+
