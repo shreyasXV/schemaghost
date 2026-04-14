@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -143,6 +144,15 @@ func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL environment variable is required")
+	}
+
+	// Default to sslmode=prefer if not specified (works for both local dev and cloud)
+	if !strings.Contains(dbURL, "sslmode=") {
+		sep := "?"
+		if strings.Contains(dbURL, "?") {
+			sep = "&"
+		}
+		dbURL += sep + "sslmode=prefer"
 	}
 
 	port := os.Getenv("PORT")
