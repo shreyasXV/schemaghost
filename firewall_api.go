@@ -115,10 +115,23 @@ func handleViolations(w http.ResponseWriter, r *http.Request) {
 		violations = policyEngine.GetViolations()
 	}
 
-	// Return newest first
-	reversed := make([]PolicyViolation, len(violations))
+	// Return newest first, with PII annotations
+	type violationWithPII struct {
+		PolicyViolation
+		HasPII     bool     `json:"has_pii"`
+		PIIColumns []string `json:"pii_columns,omitempty"`
+	}
+
+	reversed := make([]violationWithPII, len(violations))
 	for i, v := range violations {
-		reversed[len(violations)-1-i] = v
+		vp := violationWithPII{PolicyViolation: v}
+		// Parse query to detect PII columns
+		if v.Query != "" {
+			parsed := ParseQuery(v.Query)
+			vp.HasPII = parsed.HasPII
+			vp.PIIColumns = parsed.PIIColumns
+		}
+		reversed[len(violations)-1-i] = vp
 	}
 
 	writeJSON(w, map[string]interface{}{

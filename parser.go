@@ -13,10 +13,13 @@ type ParsedQuery struct {
 	Operations      []string // all operations found (multi-statement support)
 	Tables          []string
 	Functions       []string
+	Columns         []string // all column references found in query
+	PIIColumns      []string // columns that match PII-sensitive names
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
 	HasRegprocCast      bool // true if query contains ::regproc/::regprocedure cast
 	HasPgCatalogOp      bool // true if query uses OPERATOR(pg_catalog.*) syntax
+	HasPII              bool // true if query touches PII-sensitive columns
 	UsedAST             bool
 }
 
@@ -28,6 +31,26 @@ var systemColumnNames = map[string]bool{
 	"cmin":     true,
 	"cmax":     true,
 	"tableoid": true,
+}
+
+// piiColumnNames are column names that typically contain personally identifiable information
+var piiColumnNames = map[string]bool{
+	"email":           true,
+	"ssn":             true,
+	"social_security": true,
+	"phone":           true,
+	"phone_number":    true,
+	"address":         true,
+	"credit_card":     true,
+	"credit_card_number": true,
+	"card_number":     true,
+	"password":        true,
+	"password_hash":   true,
+	"dob":             true,
+	"date_of_birth":   true,
+	"salary":          true,
+	"bank_account":    true,
+	"bank_account_number": true,
 }
 
 // sanitizeQuery strips null bytes, zero-width characters, and other Unicode tricks
@@ -105,6 +128,7 @@ func ParseQuery(query string) *ParsedQuery {
 		extractFunctionsFromNode(stmt, &pq.Functions)
 		extractServerInfoFuncs(stmt, &pq.ServerInfoFuncs)
 		extractSystemColumns(stmt, &pq.SystemColumns)
+		extractColumnsFromNode(stmt, &pq.Columns)
 
 		// Detect dangerous type casts (regproc, regprocedure, regclass)
 		if !pq.HasRegprocCast {
@@ -122,11 +146,20 @@ func ParseQuery(query string) *ParsedQuery {
 		pq.Operation = pq.Operations[0]
 	}
 
-	// Deduplicate tables and functions
+	// Deduplicate tables, functions, and columns
 	pq.Tables = dedup(pq.Tables)
 	pq.Functions = dedup(pq.Functions)
 	pq.ServerInfoFuncs = dedup(pq.ServerInfoFuncs)
 	pq.SystemColumns = dedup(pq.SystemColumns)
+	pq.Columns = dedup(pq.Columns)
+
+	// Detect PII columns
+	for _, col := range pq.Columns {
+		if piiColumnNames[strings.ToLower(col)] {
+			pq.PIIColumns = append(pq.PIIColumns, col)
+			pq.HasPII = true
+		}
+	}
 
 	return pq
 }
@@ -1844,6 +1877,142 @@ func extractServerInfoFuncs(node *pg_query.Node, funcs *[]string) {
 	}
 	if nt := node.GetNullTest(); nt != nil {
 		extractServerInfoFuncs(nt.Arg, funcs)
+	}
+}
+
+// extractColumnsFromNode recursively extracts all column references from an AST node.
+func extractColumnsFromNode(node *pg_query.Node, cols *[]string) {
+	if node == nil {
+		return
+	}
+
+	// ColumnRef — extract column names
+	if cr := node.GetColumnRef(); cr != nil {
+		for _, field := range cr.Fields {
+			if s := field.GetString_(); s != nil {
+				*cols = append(*cols, strings.ToLower(s.Sval))
+			}
+		}
+	}
+
+	// Recurse into SelectStmt
+	if sel := node.GetSelectStmt(); sel != nil {
+		for _, tgt := range sel.TargetList {
+			extractColumnsFromNode(tgt, cols)
+		}
+		if sel.WhereClause != nil {
+			extractColumnsFromNode(sel.WhereClause, cols)
+		}
+		for _, from := range sel.FromClause {
+			extractColumnsFromNode(from, cols)
+		}
+		for _, sc := range sel.SortClause {
+			extractColumnsFromNode(sc, cols)
+		}
+		for _, gc := range sel.GroupClause {
+			extractColumnsFromNode(gc, cols)
+		}
+		if sel.HavingClause != nil {
+			extractColumnsFromNode(sel.HavingClause, cols)
+		}
+		if sel.Larg != nil {
+			extractColumnsFromNode(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Larg}}, cols)
+		}
+		if sel.Rarg != nil {
+			extractColumnsFromNode(&pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel.Rarg}}, cols)
+		}
+	}
+	// InsertStmt
+	if ins := node.GetInsertStmt(); ins != nil {
+		for _, col := range ins.Cols {
+			extractColumnsFromNode(col, cols)
+		}
+		if ins.SelectStmt != nil {
+			extractColumnsFromNode(ins.SelectStmt, cols)
+		}
+		for _, ret := range ins.ReturningList {
+			extractColumnsFromNode(ret, cols)
+		}
+	}
+	// UpdateStmt
+	if upd := node.GetUpdateStmt(); upd != nil {
+		for _, tgt := range upd.TargetList {
+			extractColumnsFromNode(tgt, cols)
+		}
+		if upd.WhereClause != nil {
+			extractColumnsFromNode(upd.WhereClause, cols)
+		}
+		for _, ret := range upd.ReturningList {
+			extractColumnsFromNode(ret, cols)
+		}
+	}
+	// DeleteStmt
+	if del := node.GetDeleteStmt(); del != nil {
+		if del.WhereClause != nil {
+			extractColumnsFromNode(del.WhereClause, cols)
+		}
+		for _, ret := range del.ReturningList {
+			extractColumnsFromNode(ret, cols)
+		}
+	}
+	// ResTarget (column references in SELECT list, SET clauses)
+	if rt := node.GetResTarget(); rt != nil {
+		if rt.Name != "" {
+			*cols = append(*cols, strings.ToLower(rt.Name))
+		}
+		if rt.Val != nil {
+			extractColumnsFromNode(rt.Val, cols)
+		}
+	}
+	// Expressions
+	if ae := node.GetAExpr(); ae != nil {
+		extractColumnsFromNode(ae.Lexpr, cols)
+		extractColumnsFromNode(ae.Rexpr, cols)
+	}
+	if be := node.GetBoolExpr(); be != nil {
+		for _, arg := range be.Args {
+			extractColumnsFromNode(arg, cols)
+		}
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			extractColumnsFromNode(arg, cols)
+		}
+	}
+	if tc := node.GetTypeCast(); tc != nil {
+		extractColumnsFromNode(tc.Arg, cols)
+	}
+	if sl := node.GetSubLink(); sl != nil {
+		extractColumnsFromNode(sl.Subselect, cols)
+		extractColumnsFromNode(sl.Testexpr, cols)
+	}
+	if je := node.GetJoinExpr(); je != nil {
+		extractColumnsFromNode(je.Larg, cols)
+		extractColumnsFromNode(je.Rarg, cols)
+		extractColumnsFromNode(je.Quals, cols)
+	}
+	if sb := node.GetSortBy(); sb != nil {
+		extractColumnsFromNode(sb.Node, cols)
+	}
+	if ce := node.GetCaseExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			extractColumnsFromNode(arg, cols)
+		}
+		extractColumnsFromNode(ce.Defresult, cols)
+	}
+	if cw := node.GetCaseWhen(); cw != nil {
+		extractColumnsFromNode(cw.Expr, cols)
+		extractColumnsFromNode(cw.Result, cols)
+	}
+	if co := node.GetCoalesceExpr(); co != nil {
+		for _, arg := range co.Args {
+			extractColumnsFromNode(arg, cols)
+		}
+	}
+	if list := node.GetList(); list != nil {
+		for _, item := range list.Items {
+			extractColumnsFromNode(item, cols)
+		}
 	}
 }
 

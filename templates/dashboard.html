@@ -549,6 +549,11 @@
     color: var(--yellow);
     border: 1px solid rgba(245,197,66,0.4);
   }
+  .violation-badge.pii {
+    background: rgba(229,62,62,0.25);
+    color: #fc8181;
+    border: 1px solid rgba(229,62,62,0.5);
+  }
   .agent-bar-chart {
     display: flex;
     align-items: flex-end;
@@ -1475,17 +1480,22 @@ function renderFilteredViolations(filter) {
       const ts = v.timestamp ? timeAgo(v.timestamp) : '';
       const safeQuery = (v.query || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
       const safeAgent = (v.agent_id || '').replace(/'/g, "\\'");
-      return `<div class="violation-item">
+      const piiBadge = v.has_pii ? `<span class="violation-badge pii">PII</span>` : '';
+      const piiDetail = v.pii_columns && v.pii_columns.length > 0
+        ? ` · PII: ${v.pii_columns.join(', ')}`
+        : '';
+      return `<div class="violation-item" style="${v.has_pii ? 'border-left: 3px solid var(--red);' : ''}">
         <span class="violation-icon">${icon}</span>
         <div class="violation-body">
           <div class="violation-msg">
             <span class="violation-badge ${badgeCls}">${badgeText}</span>
+            ${piiBadge}
             Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id ? ' / ' + escHtml(v.mission_id) : ''} &mdash; ${escHtml(reason)}
             ${v.table ? ' (table: ' + escHtml(v.table) + ')' : ''}
             ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
           </div>
           <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
-          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}
+          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}${piiDetail}
             <button class="btn-block" onclick="blockQuery('${safeQuery}', '${safeAgent}')" style="margin-left:8px;">Block</button>
           </div>
         </div>
