@@ -57,9 +57,11 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Tenants     int
 		Enforcement string
 	}{
-		Pattern:     string(detector.Pattern),
-		Tenants:     len(detector.Tenants),
 		Enforcement: policyEngine.GetEnforcement(),
+	}
+	if detector != nil {
+		data.Pattern = string(detector.Pattern)
+		data.Tenants = len(detector.Tenants)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -70,37 +72,50 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleTenants returns JSON tenant leaderboard
 func handleTenants(w http.ResponseWriter, r *http.Request) {
+	if collector == nil {
+		writeJSON(w, []interface{}{})
+		return
+	}
 	data := collector.GetData()
 	writeJSON(w, data.Tenants)
 }
 
 // handleQueries returns JSON top queries
 func handleQueries(w http.ResponseWriter, r *http.Request) {
+	if collector == nil {
+		writeJSON(w, []interface{}{})
+		return
+	}
 	data := collector.GetData()
 	writeJSON(w, data.Queries)
 }
 
 // handleHealth returns health status
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	data := collector.GetData()
 	status := map[string]interface{}{
-		"status":       "ok",
-		"pattern":      string(detector.Pattern),
-		"tenants":      len(detector.Tenants),
-		"overview":     data.Overview,
-		"collected_at": data.Overview.CollectedAt,
+		"status": "ok",
+	}
+	if detector != nil {
+		status["pattern"] = string(detector.Pattern)
+		status["tenants"] = len(detector.Tenants)
+	}
+	if collector != nil {
+		data := collector.GetData()
+		status["overview"] = data.Overview
+		status["collected_at"] = data.Overview.CollectedAt
 	}
 	writeJSON(w, status)
 }
 
 // handleConfig returns detected pattern configuration
 func handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := map[string]interface{}{
-		"pattern":        string(detector.Pattern),
-		"tenants":        detector.Tenants,
-		"tenant_column":  detector.TenantColumn,
-		"tenant_schemas": detector.TenantSchemas,
-		"notes":          detector.DetectionNotes,
+	cfg := map[string]interface{}{}
+	if detector != nil {
+		cfg["pattern"] = string(detector.Pattern)
+		cfg["tenants"] = detector.Tenants
+		cfg["tenant_column"] = detector.TenantColumn
+		cfg["tenant_schemas"] = detector.TenantSchemas
+		cfg["notes"] = detector.DetectionNotes
 	}
 	writeJSON(w, cfg)
 }
