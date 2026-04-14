@@ -39,6 +39,8 @@ func main() {
 	proxyPolicies := "./policies.yaml"
 	tlsCert := os.Getenv("TLS_CERT_FILE")
 	tlsKey := os.Getenv("TLS_KEY_FILE")
+	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true"
+	upstreamTLSSkipVerify := os.Getenv("UPSTREAM_TLS_SKIP_VERIFY") == "true"
 	for i, arg := range os.Args[1:] {
 		switch arg {
 		case "--mcp":
@@ -67,6 +69,10 @@ func main() {
 			if i+1 < len(os.Args[1:])-0 {
 				tlsKey = os.Args[i+2]
 			}
+		case "--upstream-tls":
+			upstreamTLS = true
+		case "--upstream-tls-skip-verify":
+			upstreamTLSSkipVerify = true
 		}
 	}
 
@@ -92,7 +98,7 @@ func main() {
 		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
 
 		// Start proxy in a goroutine so we can also run the API server
-		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey)
+		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey, upstreamTLS, upstreamTLSSkipVerify)
 
 		// If DATABASE_URL is set, start the full API server alongside the proxy
 		// If not, start a minimal API server for violations/agents/policies only

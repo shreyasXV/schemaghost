@@ -25,7 +25,7 @@ const (
 	colorBold   = "\033[1m"
 )
 
-func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string) {
+func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string, upstreamTLS, upstreamTLSSkipVerify bool) {
 	var tlsConfig *tls.Config
 	if tlsCert != "" && tlsKey != "" {
 		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
@@ -36,9 +36,28 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		}
-		log.Printf("🔒 TLS enabled (cert: %s, key: %s)", tlsCert, tlsKey)
+		log.Printf("🔒 TLS enabled for client connections (cert: %s, key: %s)", tlsCert, tlsKey)
 	} else {
 		log.Printf("⚠️  TLS not configured — client connections will be plaintext")
+	}
+
+	// Build upstream TLS config if enabled
+	var upstreamTLSConfig *tls.Config
+	if upstreamTLS {
+		host := upstreamAddr
+		if h, _, err := net.SplitHostPort(upstreamAddr); err == nil {
+			host = h
+		}
+		upstreamTLSConfig = &tls.Config{
+			ServerName:         host,
+			InsecureSkipVerify: upstreamTLSSkipVerify,
+			MinVersion:         tls.VersionTLS12,
+		}
+		if upstreamTLSSkipVerify {
+			log.Printf("🔒 Upstream TLS enabled (skip verify — NOT for production)")
+		} else {
+			log.Printf("🔒 Upstream TLS enabled (server: %s)", host)
+		}
 	}
 
 	ln, err := net.Listen("tcp", listenAddr)
@@ -55,11 +74,11 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			log.Printf("Proxy: accept error: %v", err)
 			continue
 		}
-		go handleProxyConn(conn, upstreamAddr, pe, tlsConfig)
+		go handleProxyConn(conn, upstreamAddr, pe, tlsConfig, upstreamTLSConfig)
 	}
 }
 
-func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tlsConfig *tls.Config) {
+func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tlsConfig *tls.Config, upstreamTLSConfig *tls.Config) {
 	defer client.Close()
 
 	// 1. Read startup message (no type byte — starts with 4-byte length)
@@ -96,7 +115,13 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 				return
 			}
 		} else if proto == 80877102 { // CancelRequest
-			upstream, dialErr := net.Dial("tcp", upstreamAddr)
+			var upstream net.Conn
+			var dialErr error
+			if upstreamTLSConfig != nil {
+				upstream, dialErr = tls.Dial("tcp", upstreamAddr, upstreamTLSConfig)
+			} else {
+				upstream, dialErr = net.Dial("tcp", upstreamAddr)
+			}
 			if dialErr == nil {
 				upstream.Write(startupBuf)
 				upstream.Close()
@@ -138,8 +163,13 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		}
 	}
 
-	// 3. Connect to upstream Postgres
-	upstream, err := net.Dial("tcp", upstreamAddr)
+	// 3. Connect to upstream Postgres (with optional TLS)
+	var upstream net.Conn
+	if upstreamTLSConfig != nil {
+		upstream, err = tls.Dial("tcp", upstreamAddr, upstreamTLSConfig)
+	} else {
+		upstream, err = net.Dial("tcp", upstreamAddr)
+	}
 	if err != nil {
 		log.Printf("Proxy: upstream dial failed (%s): %v", upstreamAddr, err)
 		return
