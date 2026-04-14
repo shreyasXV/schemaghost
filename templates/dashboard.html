@@ -783,6 +783,17 @@
     margin-top: 8px;
   }
 
+  /* ── Proxy Mode ── */
+  .proxy-overview-bar {
+    display: none;
+  }
+  body.proxy-mode .proxy-overview-bar {
+    display: block;
+  }
+  body.proxy-mode .sidecar-only {
+    display: none !important;
+  }
+
   /* Responsive tweaks */
   @media (max-width: 640px) {
     .stat-value { font-size: 22px; }
@@ -819,8 +830,111 @@
   <!-- Alert Banner -->
   <div id="alert-banner"></div>
 
+  <!-- Proxy Overview Bar (visible only in proxy mode) -->
+  <div class="card proxy-overview-bar" id="proxy-overview-bar">
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-value" id="po-enforcement" style="font-size:18px;">{{if eq .Enforcement "enforce"}}🛡️ ENFORCE{{else}}👁️ MONITOR{{end}}</div>
+        <div class="stat-label">Enforcement</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="po-agents">—</div>
+        <div class="stat-label">Active Agents</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="po-queries">—</div>
+        <div class="stat-label">Total Queries</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="po-violations">—</div>
+        <div class="stat-label">Violations</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="po-uptime">—</div>
+        <div class="stat-label">Uptime</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Stats -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📈 Agent Stats</span>
+      <span class="card-subtitle" id="agent-stats-subtitle">Per-agent query, row, and cost metrics</span>
+    </div>
+    <div class="table-wrap">
+      <table id="agent-stats-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th class="num">Queries</th>
+            <th class="num">Rows</th>
+            <th class="num">Est. Cost</th>
+            <th class="num">Total Duration</th>
+            <th class="num">Avg Duration</th>
+            <th class="num">Violations</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="agent-stats-tbody">
+          <tr><td colspan="8" class="empty">Loading agent stats…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Policy Violations -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🚨 Policy Violations</span>
+        <span class="card-subtitle" id="violation-count">—</span>
+        <input type="text" id="violation-filter" placeholder="Filter by agent or reason…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:200px;">
+      </div>
+      <div id="violation-list">
+        <div class="empty">No policy violations detected</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📊 Violations per Agent</span>
+        <span class="card-subtitle">Bar chart</span>
+      </div>
+      <div id="violation-chart">
+        <div class="empty">No violation data</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connected Agents -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🤖 Connected Agents</span>
+      <span class="card-subtitle" id="agent-conn-count">—</span>
+    </div>
+    <div class="table-wrap">
+      <table id="agent-conn-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Last Mission</th>
+            <th>Status</th>
+            <th>Activity</th>
+            <th>Last Seen</th>
+            <th>User</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="agent-conn-tbody">
+          <tr><td colspan="7" class="empty">No agent connections detected</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Overview -->
-  <div class="card" id="overview-card">
+  <div class="card sidecar-only" id="overview-card">
     <div class="card-header">
       <span class="card-title">📊 Resource Overview</span>
       <span class="card-subtitle" id="collected-at"></span>
@@ -855,7 +969,7 @@
   </div>
 
   <!-- Tenant Leaderboard -->
-  <div class="card">
+  <div class="card sidecar-only">
     <div class="card-header">
       <span class="card-title">🏆 Tenant Leaderboard</span>
       <span class="card-subtitle">Click row to expand · Click headers to sort</span>
@@ -884,7 +998,7 @@
   </div>
 
   <!-- Top Slow Queries -->
-  <div class="card">
+  <div class="card sidecar-only">
     <div class="card-header">
       <span class="card-title">🐌 Top Slow Queries</span>
       <span class="card-subtitle">Ranked by avg execution time</span>
@@ -909,7 +1023,7 @@
   </div>
 
   <!-- Cost Attribution -->
-  <div class="card">
+  <div class="card sidecar-only">
     <div class="card-header">
       <span class="card-title">💰 Cost per Tenant</span>
       <span class="card-subtitle">Estimated monthly cost allocation based on query time · Default: $0.50/hr (set RDS_HOURLY_COST to adjust)</span>
@@ -920,7 +1034,7 @@
   </div>
 
   <!-- Anomalies + Predictions (side by side) -->
-  <div class="two-col">
+  <div class="two-col sidecar-only">
     <div class="card">
       <div class="card-header">
         <span class="card-title">🔥 Active Anomalies</span>
@@ -943,7 +1057,7 @@
   </div>
 
   <!-- Throttle Status -->
-  <div class="card">
+  <div class="card sidecar-only">
     <div class="card-header">
       <span class="card-title">🛡️ Throttle Status</span>
       <span class="card-subtitle" id="throttle-status">Monitoring</span>
@@ -953,82 +1067,6 @@
     </div>
   </div>
 
-  <!-- Policy Violations -->
-  <div class="two-col">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🚨 Policy Violations</span>
-        <span class="card-subtitle" id="violation-count">—</span>
-        <input type="text" id="violation-filter" placeholder="Filter by agent or reason…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:200px;">
-      </div>
-      <div id="violation-list">
-        <div class="empty">No policy violations detected</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">📊 Violations per Agent</span>
-        <span class="card-subtitle">Bar chart</span>
-      </div>
-      <div id="violation-chart">
-        <div class="empty">No violation data</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Agent Stats -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">📈 Agent Stats</span>
-      <span class="card-subtitle" id="agent-stats-subtitle">Per-agent query, row, and cost metrics</span>
-    </div>
-    <div class="table-wrap">
-      <table id="agent-stats-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th class="num">Queries</th>
-            <th class="num">Rows</th>
-            <th class="num">Est. Cost</th>
-            <th class="num">Total Duration</th>
-            <th class="num">Avg Duration</th>
-            <th class="num">Violations</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="agent-stats-tbody">
-          <tr><td colspan="8" class="empty">Loading agent stats…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Connected Agents -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">🤖 Connected Agents</span>
-      <span class="card-subtitle" id="agent-conn-count">—</span>
-    </div>
-    <div class="table-wrap">
-      <table id="agent-conn-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>Last Mission</th>
-            <th>Status</th>
-            <th>Activity</th>
-            <th>Last Seen</th>
-            <th>User</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="agent-conn-tbody">
-          <tr><td colspan="7" class="empty">No agent connections detected</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
 
 </main>
 
@@ -1738,6 +1776,7 @@ async function refreshViolations() {
     const countEl = document.getElementById('violation-count');
     allViolations = data.violations || [];
     countEl.textContent = allViolations.length > 0 ? allViolations.length + ' total' : 'None';
+    document.getElementById('po-violations').textContent = allViolations.length;
 
     const filter = document.getElementById('violation-filter').value.toLowerCase().trim();
     renderFilteredViolations(filter);
@@ -1787,6 +1826,7 @@ async function refreshAgentStats() {
     }
     // Sort by total queries descending
     agents.sort((a, b) => (b.total_queries || 0) - (a.total_queries || 0));
+    document.getElementById('po-queries').textContent = fmtNum(agents.reduce((s, a) => s + (a.total_queries || 0), 0));
     tbody.innerHTML = agents.map(a => {
       const status = a.paused ? '<span style="color:var(--yellow)">⏸ paused</span>'
         : a.active ? '<span style="color:#38a169">● active</span>'
@@ -1818,6 +1858,7 @@ async function refreshAgentConnections() {
     countEl.textContent = agents.length > 0
       ? `${activeCount} active · ${agents.length} total`
       : 'None detected';
+    document.getElementById('po-agents').textContent = activeCount;
 
     if (agents.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty">No agent connections detected</td></tr>';
@@ -1885,6 +1926,11 @@ async function refresh() {
     }
 
     setStatus(true, `connected · ${health.tenants ?? 0} tenants`);
+    // Update proxy overview bar uptime
+    const upSec = Math.floor((Date.now() - proxyStartTime) / 1000);
+    const upMin = Math.floor(upSec / 60);
+    const upHr = Math.floor(upMin / 60);
+    document.getElementById('po-uptime').textContent = upHr > 0 ? upHr+'h '+upMin%60+'m' : upMin > 0 ? upMin+'m '+upSec%60+'s' : upSec+'s';
     label.textContent = '✓ live';
   } catch (e) {
     setStatus(false, 'error: ' + e.message);
@@ -1907,7 +1953,16 @@ async function refresh() {
 // Sparklines on separate interval (every 30s)
 setInterval(refreshSparklines, 30000);
 
-document.addEventListener('DOMContentLoaded', () => {
+const proxyStartTime = Date.now();
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Detect proxy mode before first render
+  try {
+    const h = await fetchJSON('/api/health');
+    if (h.mode === 'proxy') {
+      document.body.classList.add('proxy-mode');
+    }
+  } catch(e) {}
   loadPausedAgents();
   refresh();
   refreshAlerts();
