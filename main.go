@@ -119,6 +119,9 @@ func main() {
 		mux.HandleFunc("/api/rules/create", handleRuleCreate)
 		mux.HandleFunc("/api/agents/pause/", handlePauseAgent)
 		mux.HandleFunc("/api/agents/stats", handleAgentStats)
+		mux.HandleFunc("/favicon.png", handleFavicon)
+		mux.HandleFunc("/favicon.ico", handleFavicon)
+		mux.HandleFunc("/", handleDashboard)
 
 		apiAddr := fmt.Sprintf("%s:%s", apiBind, apiPort)
 		log.Printf("📊 FaultWall API server on http://%s", apiAddr)
