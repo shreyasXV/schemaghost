@@ -69,36 +69,41 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		return
 	}
 
-	// Handle SSL request (protocol version 80877103)
-	if len(startupBuf) >= 8 {
+	// Handle pre-startup negotiation (GSS, SSL, Cancel) — may need multiple rounds
+	// psql 16+ sends: GSSENCRequest → SSLRequest → StartupMessage
+	for {
+		if len(startupBuf) < 8 {
+			break
+		}
 		proto := binary.BigEndian.Uint32(startupBuf[4:8])
-		if proto == 80877103 { // SSLRequest
-			if tlsConfig != nil {
-				// Accept SSL — upgrade connection to TLS
-				client.Write([]byte{'S'})
-				client = tls.Server(client, tlsConfig)
-			} else {
-				client.Write([]byte{'N'}) // Deny SSL — client will retry plaintext
-			}
-			startupBuf, err = readStartupMessage(client)
-			if err != nil {
-				log.Printf("Proxy: failed to read startup after SSL negotiation: %v", err)
-				return
-			}
-		} else if proto == 80877104 { // GSSENCRequest
+		if proto == 80877104 { // GSSENCRequest
 			client.Write([]byte{'N'})
 			startupBuf, err = readStartupMessage(client)
 			if err != nil {
 				log.Printf("Proxy: failed to read startup after GSS denial: %v", err)
 				return
 			}
-		} else if proto == 80877102 { // CancelRequest — just forward to upstream
+		} else if proto == 80877103 { // SSLRequest
+			if tlsConfig != nil {
+				client.Write([]byte{'S'})
+				client = tls.Server(client, tlsConfig)
+			} else {
+				client.Write([]byte{'N'})
+			}
+			startupBuf, err = readStartupMessage(client)
+			if err != nil {
+				log.Printf("Proxy: failed to read startup after SSL negotiation: %v", err)
+				return
+			}
+		} else if proto == 80877102 { // CancelRequest
 			upstream, dialErr := net.Dial("tcp", upstreamAddr)
 			if dialErr == nil {
 				upstream.Write(startupBuf)
 				upstream.Close()
 			}
 			return
+		} else {
+			break // Real startup message — proceed
 		}
 	}
 
