@@ -349,6 +349,9 @@ func executeMCPTool(name string, args map[string]interface{}) (interface{}, erro
 }
 
 func mcpListTenants() (interface{}, error) {
+	if collector == nil || costEstimator == nil {
+		return map[string]interface{}{"tenants": []interface{}{}, "message": "not available in proxy mode"}, nil
+	}
 	data := collector.GetData()
 	costs := costEstimator.GetCosts()
 	costMap := make(map[string]TenantCost)
@@ -406,6 +409,9 @@ func mcpGetNoisyTenants(thresholdMs float64) (interface{}, error) {
 }
 
 func mcpGetCosts() (interface{}, error) {
+	if costEstimator == nil {
+		return []interface{}{}, nil
+	}
 	return costEstimator.GetCosts(), nil
 }
 
@@ -498,10 +504,16 @@ func mcpGetHealth() (interface{}, error) {
 }
 
 func mcpGetThrottleEvents() (interface{}, error) {
+	if throttler == nil {
+		return []interface{}{}, nil
+	}
 	return throttler.GetEvents(), nil
 }
 
 func mcpGetAnomalies() (interface{}, error) {
+	if anomalyDetector == nil {
+		return map[string]interface{}{"active_count": 0, "anomalies": []interface{}{}}, nil
+	}
 	active := anomalyDetector.GetActive()
 	var summaries []map[string]interface{}
 	for _, a := range active {
@@ -520,6 +532,9 @@ func mcpGetAnomalies() (interface{}, error) {
 }
 
 func mcpGetPredictions() (interface{}, error) {
+	if predictor == nil {
+		return map[string]interface{}{"predictions": []interface{}{}}, nil
+	}
 	preds := predictor.GetPredictions()
 	var summaries []map[string]interface{}
 	for _, p := range preds {
