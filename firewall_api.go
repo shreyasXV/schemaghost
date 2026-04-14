@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -123,4 +125,120 @@ func handleViolations(w http.ResponseWriter, r *http.Request) {
 		"violations": reversed,
 		"count":      len(reversed),
 	})
+}
+
+// handleBlockRule adds a blocked query pattern to the agent's policy and persists it
+// POST /api/rules/block
+// Body: {"query_pattern": "...", "agent_id": "..."}
+func handleBlockRule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "failed to read body"})
+		return
+	}
+
+	var req struct {
+		QueryPattern string `json:"query_pattern"`
+		AgentID      string `json:"agent_id"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "invalid JSON"})
+		return
+	}
+
+	if req.QueryPattern == "" {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "query_pattern required"})
+		return
+	}
+
+	// Extract tables from the query pattern to add to blocked_tables
+	parsed := ParseQuery(req.QueryPattern)
+	tables := parsed.Tables
+
+	cfg := policyEngine.GetConfig()
+	if cfg == nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "no policy config loaded"})
+		return
+	}
+
+	// Add tables to the agent's blocked_tables (or unidentified if no agent)
+	policyEngine.mu.Lock()
+	if req.AgentID != "" && req.AgentID != "unidentified" {
+		agent, exists := cfg.Agents[req.AgentID]
+		if !exists {
+			agent = AgentPolicy{Description: "Auto-created by block rule"}
+		}
+		for _, t := range tables {
+			if !isTableBlocked(t, agent.BlockedTables) {
+				agent.BlockedTables = append(agent.BlockedTables, t)
+			}
+		}
+		cfg.Agents[req.AgentID] = agent
+	}
+	policyEngine.mu.Unlock()
+
+	// Persist to file and reload
+	if err := policyEngine.SaveToFile(); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": err.Error()})
+		return
+	}
+	if err := policyEngine.Reload(); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"status":         "ok",
+		"message":        "Block rule applied and persisted",
+		"blocked_tables": tables,
+		"agent_id":       req.AgentID,
+	})
+}
+
+// handlePauseAgent pauses or resumes an agent
+// POST /api/agents/pause/{agent_id} — pause the agent
+// DELETE /api/agents/pause/{agent_id} — resume the agent
+// GET /api/agents/pause/{agent_id} — check pause status
+func handlePauseAgent(w http.ResponseWriter, r *http.Request) {
+	// Parse agent_id from path: /api/agents/pause/{agent_id}
+	agentID := strings.TrimPrefix(r.URL.Path, "/api/agents/pause/")
+	if agentID == "" {
+		// Return list of all paused agents
+		writeJSON(w, map[string]interface{}{
+			"paused_agents": policyEngine.GetPausedAgents(),
+		})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		policyEngine.SetAgentPaused(agentID, true)
+		writeJSON(w, map[string]interface{}{
+			"status":   "ok",
+			"agent_id": agentID,
+			"paused":   true,
+			"message":  "Agent paused — all queries will be blocked",
+		})
+	case http.MethodDelete:
+		policyEngine.SetAgentPaused(agentID, false)
+		writeJSON(w, map[string]interface{}{
+			"status":   "ok",
+			"agent_id": agentID,
+			"paused":   false,
+			"message":  "Agent resumed",
+		})
+	case http.MethodGet:
+		paused := policyEngine.IsAgentPaused(agentID)
+		writeJSON(w, map[string]interface{}{
+			"agent_id": agentID,
+			"paused":   paused,
+		})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

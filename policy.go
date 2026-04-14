@@ -119,11 +119,12 @@ type PolicyViolation struct {
 
 // PolicyEngine manages policy loading, enforcement, and violation tracking
 type PolicyEngine struct {
-	mu          sync.RWMutex
-	config      *PolicyConfig
-	violations  []PolicyViolation
-	enforcement string // "enforce" | "monitor"
-	filePath    string
+	mu           sync.RWMutex
+	config       *PolicyConfig
+	violations   []PolicyViolation
+	enforcement  string // "enforce" | "monitor"
+	filePath     string
+	pausedAgents map[string]bool // agents that are paused (all queries blocked)
 }
 
 func NewPolicyEngine() *PolicyEngine {
@@ -137,8 +138,9 @@ func NewPolicyEngine() *PolicyEngine {
 	}
 
 	pe := &PolicyEngine{
-		enforcement: enforcement,
-		filePath:    filePath,
+		enforcement:  enforcement,
+		filePath:     filePath,
+		pausedAgents: make(map[string]bool),
 	}
 
 	if err := pe.LoadFromFile(filePath); err != nil {
@@ -183,6 +185,63 @@ func (pe *PolicyEngine) LoadFromFile(path string) error {
 // Reload hot-reloads the policy file
 func (pe *PolicyEngine) Reload() error {
 	return pe.LoadFromFile(pe.filePath)
+}
+
+// SaveToFile writes the current policy config back to the YAML file
+func (pe *PolicyEngine) SaveToFile() error {
+	pe.mu.RLock()
+	cfg := pe.config
+	pe.mu.RUnlock()
+
+	if cfg == nil {
+		return fmt.Errorf("no config to save")
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling policy config: %w", err)
+	}
+
+	if err := os.WriteFile(pe.filePath, data, 0644); err != nil {
+		return fmt.Errorf("writing policy file: %w", err)
+	}
+
+	log.Printf("Policy engine: saved config to %s", pe.filePath)
+	return nil
+}
+
+// IsAgentPaused returns whether an agent is currently paused
+func (pe *PolicyEngine) IsAgentPaused(agentID string) bool {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	return pe.pausedAgents[agentID]
+}
+
+// SetAgentPaused sets the paused state for an agent
+func (pe *PolicyEngine) SetAgentPaused(agentID string, paused bool) {
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
+	if paused {
+		pe.pausedAgents[agentID] = true
+	} else {
+		delete(pe.pausedAgents, agentID)
+	}
+}
+
+// GetPausedAgents returns all currently paused agent IDs
+func (pe *PolicyEngine) GetPausedAgents() []string {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	result := make([]string, 0, len(pe.pausedAgents))
+	for id := range pe.pausedAgents {
+		result = append(result, id)
+	}
+	return result
+}
+
+// GetFilePath returns the policy file path
+func (pe *PolicyEngine) GetFilePath() string {
+	return pe.filePath
 }
 
 // GetConfig returns the current policy config
@@ -406,6 +465,20 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 
 	if cfg == nil {
 		return nil
+	}
+
+	// Check if agent is paused (all queries blocked)
+	if identity != nil && pe.IsAgentPaused(identity.AgentID) {
+		return &PolicyViolation{
+			AgentID:   identity.AgentID,
+			MissionID: identity.MissionID,
+			Query:     truncateQuery(query),
+			Reason:    "agent_paused",
+			Operation: "ALL",
+			PID:       pid,
+			Action:    "pending",
+			Timestamp: time.Now(),
+		}
 	}
 
 	// Parse query using AST (falls back to regex automatically)

@@ -587,6 +587,59 @@
     margin-bottom: 2px;
   }
 
+  /* Action Buttons */
+  .btn-block {
+    background: rgba(229,62,62,0.15);
+    border: 1px solid rgba(229,62,62,0.4);
+    color: #fc8181;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-block:hover {
+    background: rgba(229,62,62,0.3);
+  }
+  .btn-pause {
+    background: rgba(245,197,66,0.15);
+    border: 1px solid rgba(245,197,66,0.4);
+    color: var(--yellow);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-pause:hover {
+    background: rgba(245,197,66,0.3);
+  }
+  .btn-resume {
+    background: rgba(56,161,105,0.15);
+    border: 1px solid rgba(56,161,105,0.4);
+    color: var(--green);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-resume:hover {
+    background: rgba(56,161,105,0.3);
+  }
+
   /* Footer */
   footer {
     text-align: center;
@@ -807,10 +860,11 @@
             <th>Activity</th>
             <th>Last Seen</th>
             <th>User</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="agent-conn-tbody">
-          <tr><td colspan="6" class="empty">No agent connections detected</td></tr>
+          <tr><td colspan="7" class="empty">No agent connections detected</td></tr>
         </tbody>
       </table>
     </div>
@@ -1312,6 +1366,57 @@ async function refreshThrottle() {
   }
 }
 
+// ── Block / Pause Actions ──────────────────────────────────────────────
+let pausedAgentSet = new Set();
+
+async function blockQuery(query, agentId) {
+  if (!confirm('Block this query pattern for agent "' + agentId + '"?\n\nTables referenced in the query will be added to blocked_tables.')) return;
+  try {
+    const resp = await fetch('/api/rules/block', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query_pattern: query, agent_id: agentId})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      alert('Block rule applied. Tables blocked: ' + (data.blocked_tables || []).join(', '));
+      refreshViolations();
+    } else {
+      alert('Error: ' + (data.error || 'unknown'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function togglePauseAgent(agentId) {
+  const isPaused = pausedAgentSet.has(agentId);
+  const method = isPaused ? 'DELETE' : 'POST';
+  try {
+    const resp = await fetch('/api/agents/pause/' + encodeURIComponent(agentId), {method});
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      if (data.paused) {
+        pausedAgentSet.add(agentId);
+      } else {
+        pausedAgentSet.delete(agentId);
+      }
+      refreshAgentConnections();
+    } else {
+      alert('Error: ' + (data.error || 'unknown'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadPausedAgents() {
+  try {
+    const data = await fetchJSON('/api/agents/pause/');
+    pausedAgentSet = new Set(data.paused_agents || []);
+  } catch(e) { /* optional */ }
+}
+
 // ── Render Violations ──────────────────────────────────────────────────
 let allViolations = [];
 
@@ -1335,12 +1440,14 @@ function renderFilteredViolations(filter) {
     list.innerHTML = `<div class="empty">${filter ? 'No violations matching "' + escHtml(filter) + '"' : 'No policy violations detected'}</div>`;
   } else {
     const shown = filtered.slice(0, 50);
-    list.innerHTML = shown.map(v => {
+    list.innerHTML = shown.map((v, idx) => {
       const icon = v.action === 'blocked' ? '🔴' : '🟡';
       const badgeCls = v.action === 'blocked' ? 'blocked' : 'monitored';
       const badgeText = v.action === 'blocked' ? 'BLOCKED' : 'MONITORED';
       const reason = (v.reason || '').replace(/_/g, ' ');
       const ts = v.timestamp ? timeAgo(v.timestamp) : '';
+      const safeQuery = (v.query || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+      const safeAgent = (v.agent_id || '').replace(/'/g, "\\'");
       return `<div class="violation-item">
         <span class="violation-icon">${icon}</span>
         <div class="violation-body">
@@ -1351,7 +1458,9 @@ function renderFilteredViolations(filter) {
             ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
           </div>
           <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
-          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}</div>
+          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}
+            <button class="btn-block" onclick="blockQuery('${safeQuery}', '${safeAgent}')" style="margin-left:8px;">Block</button>
+          </div>
         </div>
       </div>`;
     }).join('') + (filtered.length > 50 ? `<div class="empty">Showing 50 of ${filtered.length}</div>` : '');
@@ -1414,7 +1523,7 @@ async function refreshAgentConnections() {
       : 'None detected';
 
     if (agents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No agent connections detected</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No agent connections detected</td></tr>';
       return;
     }
     // Sort: active first, then by last_seen desc
@@ -1423,17 +1532,25 @@ async function refreshAgentConnections() {
       return (b.last_seen || '').localeCompare(a.last_seen || '');
     });
     tbody.innerHTML = agents.map(a => {
-      const statusDot = a.active
-        ? '<span style="color:#38a169">● active</span>'
-        : '<span style="color:var(--muted)">○ inactive</span>';
+      const isPaused = pausedAgentSet.has(a.agent_id);
+      const statusDot = isPaused
+        ? '<span style="color:var(--yellow)">⏸ paused</span>'
+        : a.active
+          ? '<span style="color:#38a169">● active</span>'
+          : '<span style="color:var(--muted)">○ inactive</span>';
       const lastSeen = a.last_seen ? timeAgo(a.last_seen) : '—';
-      return `<tr style="${a.active ? '' : 'opacity:0.6'}">
+      const safeAgent = (a.agent_id || '').replace(/'/g, "\\'");
+      const pauseBtn = isPaused
+        ? `<button class="btn-resume" onclick="togglePauseAgent('${safeAgent}')">Resume</button>`
+        : `<button class="btn-pause" onclick="togglePauseAgent('${safeAgent}')">Pause</button>`;
+      return `<tr style="${a.active && !isPaused ? '' : 'opacity:0.6'}">
         <td><span class="tenant-id">${escHtml(a.agent_id || '—')}</span></td>
         <td>${escHtml(a.last_mission || '—')}</td>
         <td>${statusDot}</td>
         <td>${a.total_queries || 0} queries · ${a.violations || 0} violations</td>
         <td>${lastSeen}</td>
         <td>${escHtml(a.username || '—')}</td>
+        <td>${pauseBtn}</td>
       </tr>`;
     }).join('');
   } catch(e) {
@@ -1493,6 +1610,7 @@ async function refresh() {
 setInterval(refreshSparklines, 30000);
 
 document.addEventListener('DOMContentLoaded', () => {
+  loadPausedAgents();
   refresh();
   refreshAlerts();
   refreshSparklines();
