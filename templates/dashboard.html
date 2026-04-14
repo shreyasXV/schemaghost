@@ -645,6 +645,134 @@
     background: rgba(56,161,105,0.3);
   }
 
+  /* Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 600px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .modal-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--text);
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 2px 6px;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 20px; }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .modal-field {
+    margin-bottom: 14px;
+  }
+  .modal-field label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .modal-field select,
+  .modal-field input {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+  }
+  .yaml-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: var(--green);
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .modal-info {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .btn-apply {
+    background: linear-gradient(135deg, var(--red), var(--orange));
+    border: none;
+    color: white;
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-apply:hover { opacity: 0.9; }
+  .btn-cancel {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-cancel:hover { color: var(--text); border-color: var(--text); }
+  .btn-create-rule {
+    background: rgba(246,130,31,0.15);
+    border: 1px solid rgba(246,130,31,0.4);
+    color: var(--orange);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-create-rule:hover { background: rgba(246,130,31,0.3); }
+
   /* Footer */
   footer {
     text-align: center;
@@ -903,6 +1031,43 @@
   </div>
 
 </main>
+
+<!-- Rule Creation Modal -->
+<div class="modal-overlay" id="rule-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Create Policy Rule</span>
+      <button class="modal-close" onclick="closeRuleModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-field">
+        <label>Agent ID</label>
+        <input type="text" id="rule-agent-id" readonly>
+      </div>
+      <div class="modal-field">
+        <label>Source Query</label>
+        <div class="yaml-preview" id="rule-query" style="color: var(--muted);"></div>
+      </div>
+      <div class="modal-field">
+        <label>Action</label>
+        <select id="rule-action" onchange="previewRule()">
+          <option value="block_table">Block Tables</option>
+          <option value="block_operation">Block Operation</option>
+          <option value="block_function">Block Functions</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>YAML Preview</label>
+        <div class="yaml-preview" id="rule-yaml-preview">Loading preview…</div>
+      </div>
+      <div class="modal-info" id="rule-pii-info"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeRuleModal()">Cancel</button>
+      <button class="btn-apply" onclick="applyRule()">Apply Rule</button>
+    </div>
+  </div>
+</div>
 
 <footer>
   FaultWall · Multi-tenant PostgreSQL observability ·
@@ -1449,6 +1614,68 @@ async function loadPausedAgents() {
   } catch(e) { /* optional */ }
 }
 
+// ── Rule Creation Modal ───────────────────────────────────────────────
+let ruleModalQuery = '';
+let ruleModalAgent = '';
+
+function openRuleModal(query, agentId) {
+  ruleModalQuery = query;
+  ruleModalAgent = agentId;
+  document.getElementById('rule-agent-id').value = agentId;
+  document.getElementById('rule-query').textContent = query;
+  document.getElementById('rule-action').value = 'block_table';
+  document.getElementById('rule-modal').classList.add('open');
+  previewRule();
+}
+
+function closeRuleModal() {
+  document.getElementById('rule-modal').classList.remove('open');
+}
+
+async function previewRule() {
+  const action = document.getElementById('rule-action').value;
+  const preview = document.getElementById('rule-yaml-preview');
+  const piiInfo = document.getElementById('rule-pii-info');
+  preview.textContent = 'Loading preview…';
+  try {
+    const resp = await fetch('/api/rules/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: ruleModalQuery, agent_id: ruleModalAgent, action: action})
+    });
+    const data = await resp.json();
+    preview.textContent = data.yaml_preview || 'No preview available';
+    if (data.has_pii) {
+      piiInfo.innerHTML = '<span style="color:var(--red);">PII detected: ' + (data.pii_columns || []).join(', ') + '</span>';
+    } else {
+      piiInfo.textContent = '';
+    }
+  } catch(e) {
+    preview.textContent = 'Error loading preview: ' + e.message;
+  }
+}
+
+async function applyRule() {
+  const action = document.getElementById('rule-action').value;
+  try {
+    const resp = await fetch('/api/rules/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: ruleModalQuery, agent_id: ruleModalAgent, action: action})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      alert('Rule applied successfully!\n\n' + (data.message || ''));
+      closeRuleModal();
+      refreshViolations();
+    } else {
+      alert('Error: ' + (data.error || 'unknown'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 // ── Render Violations ──────────────────────────────────────────────────
 let allViolations = [];
 
@@ -1497,6 +1724,7 @@ function renderFilteredViolations(filter) {
           <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
           <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}${piiDetail}
             <button class="btn-block" onclick="blockQuery('${safeQuery}', '${safeAgent}')" style="margin-left:8px;">Block</button>
+            <button class="btn-create-rule" onclick="openRuleModal('${safeQuery}', '${safeAgent}')" style="margin-left:4px;">Create Rule</button>
           </div>
         </div>
       </div>`;

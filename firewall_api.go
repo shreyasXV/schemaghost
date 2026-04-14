@@ -258,6 +258,186 @@ func handleBlockRule(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRulePreview generates a YAML policy rule preview from a query without applying it
+// POST /api/rules/preview
+// Body: {"query": "...", "agent_id": "...", "action": "block_table|block_operation|block_function"}
+func handleRulePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "failed to read body"})
+		return
+	}
+
+	var req struct {
+		Query   string `json:"query"`
+		AgentID string `json:"agent_id"`
+		Action  string `json:"action"` // block_table, block_operation, block_function
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "invalid JSON"})
+		return
+	}
+
+	rule := generateRuleFromQuery(req.Query, req.AgentID, req.Action)
+	writeJSON(w, rule)
+}
+
+// handleRuleCreate generates and applies a YAML policy rule from a query
+// POST /api/rules/create
+// Body: {"query": "...", "agent_id": "...", "action": "block_table|block_operation|block_function"}
+func handleRuleCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "failed to read body"})
+		return
+	}
+
+	var req struct {
+		Query   string `json:"query"`
+		AgentID string `json:"agent_id"`
+		Action  string `json:"action"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "invalid JSON"})
+		return
+	}
+
+	if req.Query == "" || req.AgentID == "" {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "query and agent_id required"})
+		return
+	}
+
+	rule := generateRuleFromQuery(req.Query, req.AgentID, req.Action)
+
+	// Apply the rule to the live config
+	cfg := policyEngine.GetConfig()
+	if cfg == nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": "no policy config loaded"})
+		return
+	}
+
+	policyEngine.mu.Lock()
+	agent, exists := cfg.Agents[req.AgentID]
+	if !exists {
+		agent = AgentPolicy{Description: "Auto-created by rule builder"}
+	}
+
+	blockedTables, _ := rule["blocked_tables"].([]string)
+	for _, t := range blockedTables {
+		if !isTableBlocked(t, agent.BlockedTables) {
+			agent.BlockedTables = append(agent.BlockedTables, t)
+		}
+	}
+
+	blockedOps, _ := rule["blocked_operations"].([]string)
+	for _, op := range blockedOps {
+		found := false
+		for _, existing := range agent.BlockedOperations {
+			if strings.EqualFold(existing, op) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			agent.BlockedOperations = append(agent.BlockedOperations, op)
+		}
+	}
+
+	blockedFuncs, _ := rule["blocked_functions"].([]string)
+	if len(blockedFuncs) > 0 {
+		for _, fn := range blockedFuncs {
+			if !isFunctionBlocked(fn, cfg.BlockedFunctions) {
+				cfg.BlockedFunctions = append(cfg.BlockedFunctions, fn)
+			}
+		}
+	}
+
+	cfg.Agents[req.AgentID] = agent
+	policyEngine.mu.Unlock()
+
+	if err := policyEngine.SaveToFile(); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": err.Error()})
+		return
+	}
+	if err := policyEngine.Reload(); err != nil {
+		writeJSON(w, map[string]interface{}{"status": "error", "error": err.Error()})
+		return
+	}
+
+	rule["status"] = "ok"
+	rule["message"] = "Rule applied and persisted to " + policyEngine.GetFilePath()
+	writeJSON(w, rule)
+}
+
+// generateRuleFromQuery analyzes a query and generates a policy rule
+func generateRuleFromQuery(query, agentID, action string) map[string]interface{} {
+	parsed := ParseQuery(query)
+
+	result := map[string]interface{}{
+		"agent_id":   agentID,
+		"query":      query,
+		"operation":  parsed.Operation,
+		"tables":     parsed.Tables,
+		"functions":  parsed.Functions,
+		"columns":    parsed.Columns,
+		"has_pii":    parsed.HasPII,
+		"pii_columns": parsed.PIIColumns,
+	}
+
+	// Generate YAML preview
+	var yamlLines []string
+	yamlLines = append(yamlLines, "# Auto-generated rule for agent: "+agentID)
+	yamlLines = append(yamlLines, "# Source query: "+truncateQuery(query))
+	yamlLines = append(yamlLines, agentID+":")
+
+	var blockedTables []string
+	var blockedOps []string
+	var blockedFuncs []string
+
+	switch action {
+	case "block_operation":
+		if parsed.Operation != "" {
+			blockedOps = append(blockedOps, parsed.Operation)
+			yamlLines = append(yamlLines, "  blocked_operations:")
+			yamlLines = append(yamlLines, "    - "+parsed.Operation)
+		}
+	case "block_function":
+		blockedFuncs = parsed.Functions
+		if len(parsed.Functions) > 0 {
+			yamlLines = append(yamlLines, "  # Add to global blocked_functions:")
+			for _, fn := range parsed.Functions {
+				yamlLines = append(yamlLines, "  #   - "+fn)
+			}
+		}
+	default: // block_table (default)
+		blockedTables = parsed.Tables
+		if len(parsed.Tables) > 0 {
+			yamlLines = append(yamlLines, "  blocked_tables:")
+			for _, t := range parsed.Tables {
+				yamlLines = append(yamlLines, "    - "+t)
+			}
+		}
+	}
+
+	result["yaml_preview"] = strings.Join(yamlLines, "\n")
+	result["blocked_tables"] = blockedTables
+	result["blocked_operations"] = blockedOps
+	result["blocked_functions"] = blockedFuncs
+	result["action"] = action
+
+	return result
+}
+
 // handlePauseAgent pauses or resumes an agent
 // POST /api/agents/pause/{agent_id} — pause the agent
 // DELETE /api/agents/pause/{agent_id} — resume the agent
