@@ -1355,3 +1355,51 @@ func TestStatFuncWithRegclassDetection(t *testing.T) {
 		})
 	}
 }
+
+func TestCTEAliasNotReportedAsTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantTbl  []string // tables that SHOULD appear
+		dontWant []string // CTE aliases that should NOT appear
+	}{
+		{
+			name:     "simple CTE",
+			query:    "WITH o AS (SELECT * FROM orders) SELECT * FROM o",
+			wantTbl:  []string{"orders"},
+			dontWant: []string{"o"},
+		},
+		{
+			name:     "multiple CTEs",
+			query:    "WITH a AS (SELECT * FROM users), b AS (SELECT * FROM orders) SELECT * FROM a JOIN b ON a.id = b.user_id",
+			wantTbl:  []string{"users", "orders"},
+			dontWant: []string{"a", "b"},
+		},
+		{
+			name:     "nested CTE with subquery",
+			query:    "WITH cte_data AS (SELECT email FROM customers WHERE id < 100) SELECT * FROM cte_data",
+			wantTbl:  []string{"customers"},
+			dontWant: []string{"cte_data"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pq := ParseQuery(tt.query)
+			tblSet := make(map[string]bool)
+			for _, tbl := range pq.Tables {
+				tblSet[tbl] = true
+			}
+			for _, want := range tt.wantTbl {
+				if !tblSet[want] {
+					t.Errorf("expected table %q in %v", want, pq.Tables)
+				}
+			}
+			for _, dontWant := range tt.dontWant {
+				if tblSet[dontWant] {
+					t.Errorf("CTE alias %q should NOT be in table list %v", dontWant, pq.Tables)
+				}
+			}
+		})
+	}
+}

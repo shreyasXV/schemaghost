@@ -328,8 +328,13 @@ agents:
       - information_schema.*
 
 # Unidentified connections (no agent: prefix in application_name)
+# Policies:
+#   deny    — block all queries (strictest)
+#   log     — allow but log every query for audit trail
+#   monitor — allow, only log actual violations (blocked tables/functions)
+#   allow   — allow, enforce global blocklists only (most permissive)
 unidentified:
-  policy: monitor  # monitor | deny | allow
+  policy: monitor  # deny | log | monitor | allow
   blocked_tables:
     - pg_catalog.*
     - information_schema.*

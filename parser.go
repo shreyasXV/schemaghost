@@ -17,6 +17,7 @@ type ParsedQuery struct {
 	PIIColumns      []string // columns that match PII-sensitive names
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
+	CTENames        []string // CTE alias names (WITH x AS ...) — not real tables
 	HasRegprocCast      bool // true if query contains ::regproc/::regprocedure cast
 	HasPgCatalogOp      bool // true if query uses OPERATOR(pg_catalog.*) syntax
 	HasPII              bool // true if query touches PII-sensitive columns
@@ -130,6 +131,9 @@ func ParseQuery(query string) *ParsedQuery {
 		extractSystemColumns(stmt, &pq.SystemColumns)
 		extractColumnsFromNode(stmt, &pq.Columns)
 
+		// Collect CTE names to filter from table list
+		collectCTENames(stmt, &pq.CTENames)
+
 		// Detect dangerous type casts (regproc, regprocedure, regclass)
 		if !pq.HasRegprocCast {
 			pq.HasRegprocCast = hasRegprocCast(stmt)
@@ -152,6 +156,24 @@ func ParseQuery(query string) *ParsedQuery {
 	pq.ServerInfoFuncs = dedup(pq.ServerInfoFuncs)
 	pq.SystemColumns = dedup(pq.SystemColumns)
 	pq.Columns = dedup(pq.Columns)
+	pq.CTENames = dedup(pq.CTENames)
+
+	// Filter CTE aliases from table list — CTE names are not real tables
+	// e.g., WITH o AS (SELECT * FROM orders) SELECT * FROM o
+	// "o" is a CTE alias, not a table; "orders" is the real table
+	if len(pq.CTENames) > 0 {
+		cteSet := make(map[string]bool, len(pq.CTENames))
+		for _, name := range pq.CTENames {
+			cteSet[name] = true
+		}
+		filtered := pq.Tables[:0]
+		for _, t := range pq.Tables {
+			if !cteSet[t] {
+				filtered = append(filtered, t)
+			}
+		}
+		pq.Tables = filtered
+	}
 
 	// Detect PII columns
 	for _, col := range pq.Columns {
@@ -475,6 +497,48 @@ func extractOperationFromNode(node *pg_query.Node) string {
 }
 
 // extractTablesFromNode recursively walks the AST to find all table references
+// collectCTENames extracts CTE alias names from WITH clauses
+func collectCTENames(node *pg_query.Node, names *[]string) {
+	if node == nil {
+		return
+	}
+	if sel := node.GetSelectStmt(); sel != nil && sel.WithClause != nil {
+		for _, cte := range sel.WithClause.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctename != "" {
+				*names = append(*names, strings.ToLower(c.Ctename))
+			}
+		}
+	}
+	if ins := node.GetInsertStmt(); ins != nil && ins.WithClause != nil {
+		for _, cte := range ins.WithClause.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctename != "" {
+				*names = append(*names, strings.ToLower(c.Ctename))
+			}
+		}
+	}
+	if upd := node.GetUpdateStmt(); upd != nil && upd.WithClause != nil {
+		for _, cte := range upd.WithClause.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctename != "" {
+				*names = append(*names, strings.ToLower(c.Ctename))
+			}
+		}
+	}
+	if del := node.GetDeleteStmt(); del != nil && del.WithClause != nil {
+		for _, cte := range del.WithClause.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctename != "" {
+				*names = append(*names, strings.ToLower(c.Ctename))
+			}
+		}
+	}
+	if mrg := node.GetMergeStmt(); mrg != nil && mrg.WithClause != nil {
+		for _, cte := range mrg.WithClause.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctename != "" {
+				*names = append(*names, strings.ToLower(c.Ctename))
+			}
+		}
+	}
+}
+
 func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 	if node == nil {
 		return

@@ -99,6 +99,14 @@ type MissionPolicy struct {
 }
 
 // UnidentifiedPolicy handles connections without agent: prefix
+// Policy modes:
+//   - "deny":    block all queries (strictest)
+//   - "log":     allow queries but log all unidentified access as violations (audit trail)
+//   - "monitor": allow queries, only log actual violations (blocked tables/functions)
+//   - "allow":   allow queries, enforce global blocklists only (most permissive)
+//
+// Migration note: "monitor" was renamed from the old behavior that logged every query.
+// The old "monitor" behavior is now "log". Current "monitor" only logs real violations.
 type UnidentifiedPolicy struct {
 	Policy        string   `yaml:"policy" json:"policy"` // monitor | deny | allow
 	BlockedTables []string `yaml:"blocked_tables" json:"blocked_tables"`
@@ -634,20 +642,22 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 			}
 		}
 
-		// No specific violation found — log generic unidentified if monitor mode
-		if cfg.Unidentified.Policy == "monitor" {
+		// No specific violation found — log generic unidentified only in "log" mode
+		// "monitor" mode: only logs actual violations (blocked table/function) above
+		// "log" mode: logs every unidentified query for audit trail
+		if cfg.Unidentified.Policy == "log" {
 			return &PolicyViolation{
 				AgentID:   "unidentified",
 				Query:     truncateQuery(query),
-				Reason:    "unidentified_connection_monitored",
+				Reason:    "unidentified_connection_logged",
 				Operation: operation,
 				PID:       pid,
-				Action:    "pending",
+				Action:    "logged",
 				Timestamp: time.Now(),
 			}
 		}
 
-		// policy: allow, no violations
+		// policy: allow or monitor with no violations
 		return nil
 	}
 
