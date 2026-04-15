@@ -16,6 +16,8 @@
 
 **Your AI agent has your database password. FaultWall makes sure that's safe.**
 
+> **Deterministic. No LLM in the loop.** FaultWall uses the real PostgreSQL C parser (`pg_query_go`) for static SQL analysis — no AI, no API keys, no probabilistic guessing. Every decision is auditable, reproducible, and adds under 1ms of latency.
+
 A prompt injection hides a `DROP TABLE` in a customer feedback comment. Your agent blindly executes it. The WAF sees nothing — it's a legitimate connection with valid credentials. The database sees a normal query from an authorized user.
 
 FaultWall intercepts the query **before it reaches PostgreSQL**, parses the SQL, checks it against your policy, and blocks it:
@@ -37,8 +39,8 @@ FaultWall intercepts the query **before it reaches PostgreSQL**, parses the SQL,
 FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQL query is parsed and checked **before it reaches the database**. Blocked queries never execute.
 
 - Intercepts 100% of queries (Simple + Extended Query Protocol)
-- Parses SQL using the real PostgreSQL C parser (`pg_query_go`)
-- Sub-3ms latency overhead per query
+- Parses SQL using the real PostgreSQL C parser (`pg_query_go`) — deterministic, no LLM
+- Sub-1ms latency overhead per query
 - Works with any Postgres client: psql, psycopg2, pgx, SQLAlchemy, JDBC
 - Fail-open on internal errors (won't break your app)
 
