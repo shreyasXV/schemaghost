@@ -151,7 +151,11 @@ var migrations = map[int]string{
 			revoked     INTEGER NOT NULL DEFAULT 0,
 			revoked_at  INTEGER
 		);
-		CREATE INDEX IF NOT EXISTS idx_agents_revoked ON agents(revoked);
+		-- Partial index: only index revoked rows. revoked=0 is the common case
+		-- and would make a full index low-cardinality and useless; the planner
+		-- would skip it. Partial index gives O(k) lookups over revoked agents
+		-- where k is the count of revoked rows, not n.
+		CREATE INDEX IF NOT EXISTS idx_agents_revoked ON agents(revoked) WHERE revoked = 1;
 
 		CREATE TABLE IF NOT EXISTS jti_denylist (
 			jti        TEXT PRIMARY KEY,
@@ -184,6 +188,9 @@ func (s *Store) PutAgent(ctx context.Context, a Agent) error {
 		INSERT INTO agents (id, created_at, pubkey_fp, policy_id, description, revoked, revoked_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			-- NOTE: created_at is intentionally NOT in this SET list.
+			-- On update we preserve the original creation timestamp so audit
+			-- history survives re-registration. See TestPutAgent_UpsertPreservesCreatedAt.
 			pubkey_fp   = excluded.pubkey_fp,
 			policy_id   = excluded.policy_id,
 			description = excluded.description,
@@ -271,6 +278,13 @@ func (s *Store) DenyJTI(ctx context.Context, jti, agentID string, expiresAt time
 // IsJTIDenied reports whether the given jti is currently denied.
 // A row is considered denied only if expires_at > now; expired rows return false
 // even if present (PruneExpiredJTIs will eventually remove them).
+//
+// Intentional race: the expiry comparison is eventually consistent with
+// concurrent DenyJTI / PruneExpiredJTIs writers. For a denylist this is
+// acceptable — worst case a just-revoked token works for a few more ms on one
+// in-flight connection. Fixing it would require SERIALIZABLE isolation on the
+// hot path, which is not worth it. Do not "fix" this without a security
+// requirement that justifies the cost.
 func (s *Store) IsJTIDenied(ctx context.Context, jti string) (bool, error) {
 	var exp int64
 	err := s.db.QueryRowContext(ctx,

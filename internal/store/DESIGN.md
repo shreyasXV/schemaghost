@@ -44,9 +44,20 @@ CREATE INDEX IF NOT EXISTS idx_jti_agent   ON jti_denylist(agent_id);
 
 Rationale:
 - **Unix seconds** for timestamps — portable, sortable, no TZ bugs. Dashboard can render locally.
-- **pubkey_fp** (not full key) in agents table — real keys live in the keychain on admin's machine. Server only verifies signatures against its own pubkey. Fingerprint is for audit ("which signing key issued this agent?").
+- **pubkey_fp** (not full key) in agents table — **forward-looking for v2.2 RS256**. v2.1 uses HS256 with a single server-side shared secret (spec §3.3), so for v2.1 this column will be the same static fingerprint for every agent. Carrying the column now means no schema migration when we flip to per-agent asymmetric signing in v2.2. For v2.1 deployments it is effectively unused but harmless.
 - **policy_id** references YAML — the YAML stays source of truth for the *rules*; SQLite tracks the *identity* of agents that have ever existed.
 - **Denormalized agent_id** on jti_denylist — lets "revoke all tokens for agent X" be a single indexed scan.
+- **Partial index on `agents.revoked`** — we only index `WHERE revoked = 1`. Most rows are `revoked = 0`; a full index on this column would be low-cardinality and the planner would skip it. Partial index gives O(k) lookups where k = count of revoked agents.
+
+## Denylist growth model
+
+`jti_denylist` is bounded because:
+
+1. Every insert sets `expires_at` to a future time bounded by the JWT's original expiration (default 90 days per spec §4).
+2. `PruneExpiredJTIs` is caller-scheduled (run every 15 min in the proxy) and deletes rows where `expires_at <= now`.
+3. Maximum steady-state row count ≈ (max JTI TTL) × (revocation rate). At 90-day TTL and 10 revocations/day that's ≤ 900 rows — trivial.
+
+Out-of-scope threat: a malicious admin inserting 1M bogus JTIs. This requires admin creds (not an unauthenticated attack surface) and the prune job will drain them within one TTL window. Document rate-limiting at the admin endpoint in PR 4 if we care.
 
 ## Migration Strategy
 

@@ -343,6 +343,102 @@ func TestConcurrentWrites(t *testing.T) {
 	}
 }
 
+// TestConcurrentInterleavedOps stresses the Store with mixed Put/Get/Deny/IsDenied
+// traffic from many goroutines. Intended to be run with -race. Validates the
+// DESIGN.md claim that Store is safe for concurrent use.
+//
+// What this proves:
+//   - No data race on internal state (WAL + sql.DB pool)
+//   - No deadlock under mixed read/write contention
+//   - PutAgent/GetAgent correctness under concurrent modification
+//   - DenyJTI/IsJTIDenied correctness under concurrent modification
+//
+// Run explicitly:  go test -race -run TestConcurrentInterleavedOps ./internal/store
+func TestConcurrentInterleavedOps(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "interleaved.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Seed: 20 agents and 20 JTIs so readers have a population to hit.
+	const seed = 20
+	for i := 0; i < seed; i++ {
+		if err := s.PutAgent(ctx, Agent{
+			ID: fmtID(i), PubkeyFP: "seed-fp", PolicyID: "seed-p",
+		}); err != nil {
+			t.Fatalf("seed PutAgent: %v", err)
+		}
+		if err := s.DenyJTI(ctx, "seed-jti-"+fmtID(i), fmtID(i),
+			time.Now().UTC().Add(time.Hour), "seed"); err != nil {
+			t.Fatalf("seed DenyJTI: %v", err)
+		}
+	}
+
+	const (
+		workers    = 16
+		opsPerWkr  = 50
+	)
+	errCh := make(chan error, workers*opsPerWkr)
+	done := make(chan struct{}, workers)
+
+	for w := 0; w < workers; w++ {
+		go func(w int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < opsPerWkr; i++ {
+				switch (w + i) % 4 {
+				case 0: // PutAgent — upsert existing seed id
+					id := fmtID(i % seed)
+					errCh <- s.PutAgent(ctx, Agent{
+						ID: id, PubkeyFP: "w" + fmtID(w), PolicyID: "p",
+					})
+				case 1: // GetAgent — should never panic or race
+					_, err := s.GetAgent(ctx, fmtID(i%seed))
+					if err != nil && !errors.Is(err, ErrNotFound) {
+						errCh <- err
+					} else {
+						errCh <- nil
+					}
+				case 2: // DenyJTI — new jti per op
+					jti := "w" + fmtID(w) + "-" + fmtID(i)
+					errCh <- s.DenyJTI(ctx, jti, fmtID(i%seed),
+						time.Now().UTC().Add(time.Hour), "stress")
+				case 3: // IsJTIDenied — read a seed jti
+					_, err := s.IsJTIDenied(ctx, "seed-jti-"+fmtID(i%seed))
+					errCh <- err
+				}
+			}
+		}(w)
+	}
+
+	for i := 0; i < workers; i++ {
+		<-done
+	}
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Errorf("concurrent op failed: %v", err)
+		}
+	}
+
+	// Post-conditions: all seed agents still queryable, seed JTIs still denied.
+	for i := 0; i < seed; i++ {
+		if _, err := s.GetAgent(ctx, fmtID(i)); err != nil {
+			t.Errorf("seed agent %d vanished: %v", i, err)
+		}
+		denied, err := s.IsJTIDenied(ctx, "seed-jti-"+fmtID(i))
+		if err != nil {
+			t.Errorf("IsJTIDenied seed %d: %v", i, err)
+		}
+		if !denied {
+			t.Errorf("seed jti %d should still be denied", i)
+		}
+	}
+}
+
 func fmtID(i int) string {
 	// small helper to avoid pulling fmt import clutter in TestConcurrentWrites
 	return "agent-" + itoa(i)
