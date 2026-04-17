@@ -3,6 +3,7 @@ module github.com/shreyasXV/faultwall
 go 1.25.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgproto3/v2 v2.3.3
 	github.com/lib/pq v1.10.9
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
