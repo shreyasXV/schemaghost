@@ -84,9 +84,17 @@ fi
 echo "→ Extracting..."
 tar -xzf "$TMP/$ASSET" -C "$TMP"
 
-EXTRACTED=$(find "$TMP" -maxdepth 1 -name 'faultwall-*' -type f | head -1)
+# Find the extracted binary, excluding the tarball itself
+EXTRACTED=$(find "$TMP" -maxdepth 1 -name 'faultwall-*' -type f ! -name '*.tar.gz' ! -name '*.tgz' | head -1)
 if [[ -z "$EXTRACTED" ]]; then
   echo "✗ Binary not found after extraction" >&2
+  exit 1
+fi
+
+# Verify it's actually an executable, not a misnamed archive
+if file "$EXTRACTED" | grep -qE 'gzip|compressed|archive'; then
+  echo "✗ Expected binary but got archive: $EXTRACTED" >&2
+  echo "  file type: $(file -b "$EXTRACTED")" >&2
   exit 1
 fi
 
