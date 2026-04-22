@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"embed"
 	"fmt"
 	"io"
@@ -14,10 +15,15 @@ var policyTemplates embed.FS
 
 // runInit scaffolds a new faultwall.yaml in the current directory
 // based on a named template (balanced | strict | permissive).
+// If no flags are passed and stdin is a TTY, runs an interactive wizard
+// to ask the user for the agent name and policy template.
 func runInit(args []string) error {
-	template := "balanced"
+	template := ""
 	output := "faultwall.yaml"
 	force := false
+	agentName := ""
+	interactive := false
+	noInteractive := false
 
 	for i, arg := range args {
 		switch arg {
@@ -37,10 +43,45 @@ func runInit(args []string) error {
 			}
 		case "-f", "--force":
 			force = true
+		case "--agent":
+			if i+1 < len(args) {
+				agentName = args[i+1]
+			}
+		case "-i", "--interactive":
+			interactive = true
+		case "--no-interactive":
+			noInteractive = true
 		case "-h", "--help":
 			printInitHelp()
 			return nil
 		}
+	}
+
+	// Interactive wizard if no template/agent provided and stdin is a TTY
+	if !noInteractive && (interactive || (template == "" && agentName == "" && isTTY(os.Stdin))) {
+		wizardTemplate, wizardAgent, err := runInitWizard()
+		if err != nil {
+			return err
+		}
+		if template == "" {
+			template = wizardTemplate
+		}
+		if agentName == "" {
+			agentName = wizardAgent
+		}
+	}
+
+	// Apply defaults if still unset
+	if template == "" {
+		template = "balanced"
+	}
+	if agentName == "" {
+		agentName = "my-agent"
+	}
+
+	// Validate agent name (no spaces, no colons — these break application_name parsing)
+	if strings.ContainsAny(agentName, ": \t\n") {
+		return fmt.Errorf("agent name %q contains invalid characters (no spaces, colons)", agentName)
 	}
 
 	// Check destination
@@ -56,6 +97,9 @@ func runInit(args []string) error {
 		return fmt.Errorf("unknown template %q (valid: %s)", template, strings.Join(valid, ", "))
 	}
 
+	// Substitute my-agent → user-provided agent name
+	rendered := strings.ReplaceAll(string(data), "my-agent", agentName)
+
 	if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil && output != filepath.Base(output) {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
@@ -65,41 +109,111 @@ func runInit(args []string) error {
 		return fmt.Errorf("failed to create %s: %w", output, err)
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, strings.NewReader(string(data))); err != nil {
+	if _, err := io.Copy(f, strings.NewReader(rendered)); err != nil {
 		return fmt.Errorf("failed to write %s: %w", output, err)
 	}
 
-	fmt.Printf("✅ Created %s (%s template)\n", output, template)
+	fmt.Printf("✅ Created %s (%s template, agent: %s)\n", output, template, agentName)
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Printf("  1. Edit %s — rename 'my-agent' to your actual agent name\n", output)
-	fmt.Println("  2. Start FaultWall:")
+	fmt.Println("  1. Start FaultWall:")
 	fmt.Printf("       faultwall --proxy --policies %s\n", output)
-	fmt.Println("  3. Point your agent at port 5433 with application_name set:")
-	fmt.Println("       postgres://user:pass@localhost:5433/db?application_name=agent:my-agent:mission:default")
+	fmt.Println("  2. Get your agent connection string:")
+	fmt.Printf("       faultwall agent-url --agent %s --mission default\n", agentName)
+	fmt.Println("  3. Point your psql/app at port 5433 with that connection string.")
 	fmt.Println()
 	return nil
+}
+
+// isTTY checks if the given file is a terminal (for interactive wizard detection).
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+// runInitWizard walks the user through choosing a policy template + agent name.
+func runInitWizard() (template, agent string, err error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println("🔒 FaultWall Setup Wizard")
+	fmt.Println()
+	fmt.Println("Let's configure your policy file. Press Ctrl+C to cancel.")
+	fmt.Println()
+
+	// 1. Policy template
+	fmt.Println("Which policy template?")
+	fmt.Println("  [1] balanced     — blocks destructive ops, allows reads/writes (default)")
+	fmt.Println("  [2] strict       — read-only, blocks ALL writes")
+	fmt.Println("  [3] permissive   — only blocks catastrophic ops (DROP/TRUNCATE/GRANT)")
+	fmt.Print("\nChoose [1-3, default 1]: ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read input: %w", err)
+	}
+	choice := strings.TrimSpace(line)
+	switch choice {
+	case "", "1", "balanced":
+		template = "balanced"
+	case "2", "strict":
+		template = "strict"
+	case "3", "permissive":
+		template = "permissive"
+	default:
+		fmt.Printf("  ⚠️  unknown choice %q, defaulting to balanced\n", choice)
+		template = "balanced"
+	}
+	fmt.Printf("  → %s\n\n", template)
+
+	// 2. Agent name
+	fmt.Println("What's your agent's name?")
+	fmt.Println("  This becomes the identity in your connection string:")
+	fmt.Println("  postgres://...?application_name=agent:<NAME>:mission:default")
+	fmt.Println()
+	fmt.Println("  Examples: cursor-ai, langchain-bot, my-research-agent")
+	fmt.Print("\nAgent name [default: my-agent]: ")
+	line, err = reader.ReadString('\n')
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read input: %w", err)
+	}
+	agent = strings.TrimSpace(line)
+	if agent == "" {
+		agent = "my-agent"
+	}
+	if strings.ContainsAny(agent, ": \t") {
+		fmt.Printf("  ⚠️  invalid characters (spaces/colons), using 'my-agent'\n")
+		agent = "my-agent"
+	}
+	fmt.Printf("  → %s\n\n", agent)
+
+	return template, agent, nil
 }
 
 func printInitHelp() {
 	fmt.Println(`faultwall init — scaffold a new policy file
 
 Usage:
-  faultwall init [flags]
+  faultwall init                   # interactive wizard (default when TTY)
+  faultwall init [flags]           # non-interactive with flags
 
 Flags:
-  --balanced      Balanced policy (default) — blocks destructive ops, allows reads/writes
-  --strict        Read-only policy — blocks all writes
-  --permissive    Catastrophic-only — blocks DROP/TRUNCATE/GRANT
-  --template NAME Explicit template name (balanced|strict|permissive)
-  -o, --output    Output filename (default: faultwall.yaml)
-  -f, --force     Overwrite existing file
-  -h, --help      Show this help
+  --balanced        Balanced policy (blocks destructive ops)
+  --strict          Read-only policy (blocks all writes)
+  --permissive      Catastrophic-only (blocks DROP/TRUNCATE/GRANT)
+  --template NAME   Explicit template name (balanced|strict|permissive)
+  --agent NAME      Agent name (replaces "my-agent" in template)
+  -o, --output      Output filename (default: faultwall.yaml)
+  -f, --force       Overwrite existing file
+  -i, --interactive Force wizard even if flags supplied
+  --no-interactive  Skip wizard (use flags/defaults)
+  -h, --help        Show this help
 
 Examples:
-  faultwall init                   # drops balanced faultwall.yaml
-  faultwall init --strict          # read-only starter
-  faultwall init --permissive -o dev.yaml`)
+  faultwall init                                    # interactive wizard
+  faultwall init --balanced --agent cursor-ai       # non-interactive
+  faultwall init --strict -o prod.yaml              # strict, custom path`)
 }
 
 // runAgentURL prints a ready-to-use postgres connection string.
