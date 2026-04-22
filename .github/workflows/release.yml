@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build binaries
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p dist
+          for os in linux darwin; do
+            for arch in amd64 arm64; do
+              out="dist/faultwall-${VERSION}-${os}-${arch}"
+              GOOS=$os GOARCH=$arch CGO_ENABLED=0 \
+                go build -trimpath \
+                  -ldflags "-s -w -X main.Version=${VERSION}" \
+                  -o "$out" .
+              (cd dist && tar -czf "faultwall-${VERSION}-${os}-${arch}.tar.gz" "$(basename $out)" && rm "$(basename $out)")
+            done
+          done
+          # Checksums
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
