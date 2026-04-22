@@ -103,14 +103,18 @@ Examples:
 }
 
 // runAgentURL prints a ready-to-use postgres connection string.
+// By default the password is masked (***) to avoid credential leaks when the
+// output is piped into logs/CI. Pass --password <value> to render a real one,
+// or --env to emit an `export DATABASE_URL=...` line for shell use.
 func runAgentURL(args []string) error {
 	agent := "my-agent"
 	mission := "default"
 	host := "localhost"
 	port := "5433"
 	user := "postgres"
-	pass := "postgres"
+	pass := ""
 	db := "postgres"
+	envMode := false
 
 	for i, arg := range args {
 		switch arg {
@@ -142,6 +146,8 @@ func runAgentURL(args []string) error {
 			if i+1 < len(args) {
 				db = args[i+1]
 			}
+		case "--env":
+			envMode = true
 		case "-h", "--help":
 			fmt.Println(`faultwall agent-url — print a ready-to-use connection string
 
@@ -154,15 +160,34 @@ Flags:
   --host HOST        DB host (default: localhost)
   --port PORT        FaultWall proxy port (default: 5433)
   --user USER        DB user (default: postgres)
-  --password PASS    DB password (default: postgres)
-  --db DBNAME        Database name (default: postgres)`)
+  --password PASS    DB password (omit to render as ***)
+  --db DBNAME        Database name (default: postgres)
+  --env              Print as 'export DATABASE_URL=...' for shell eval
+
+By default, the password is masked with *** so the output is safe to paste
+into docs or CI logs. Replace *** with the real password before using, or
+pass --password to render it directly.`)
 			return nil
 		}
 	}
 
 	appName := fmt.Sprintf("agent:%s:mission:%s", agent, mission)
+	displayPass := pass
+	masked := false
+	if displayPass == "" {
+		displayPass = "***"
+		masked = true
+	}
 	url := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?application_name=%s",
-		user, pass, host, port, db, appName)
-	fmt.Println(url)
+		user, displayPass, host, port, db, appName)
+
+	if envMode {
+		fmt.Printf("export DATABASE_URL=%q\n", url)
+	} else {
+		fmt.Println(url)
+	}
+	if masked {
+		fmt.Fprintln(os.Stderr, "# Password masked as ***. Pass --password <value> to render it, or replace *** manually.")
+	}
 	return nil
 }
