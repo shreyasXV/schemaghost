@@ -10,7 +10,25 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            cc: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+          - os: macos-13         # x86_64
+            goos: darwin
+            goarch: amd64
+          - os: macos-14         # Apple Silicon
+            goos: darwin
+            goarch: arm64
+
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,25 +36,55 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
+          check-latest: true
 
-      - name: Build binaries
+      - name: Install cross-compiler (arm64 linux only)
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+          CC: ${{ matrix.cc }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           mkdir -p dist
-          for os in linux darwin; do
-            for arch in amd64 arm64; do
-              out="dist/faultwall-${VERSION}-${os}-${arch}"
-              GOOS=$os GOARCH=$arch CGO_ENABLED=0 \
-                go build -trimpath \
-                  -ldflags "-s -w -X main.Version=${VERSION}" \
-                  -o "$out" .
-              (cd dist && tar -czf "faultwall-${VERSION}-${os}-${arch}.tar.gz" "$(basename $out)" && rm "$(basename $out)")
-            done
-          done
-          # Checksums
-          (cd dist && sha256sum *.tar.gz > checksums.txt)
+          out="faultwall-${VERSION}-${GOOS}-${GOARCH}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o "dist/${out}" .
+          (cd dist && tar -czf "${out}.tar.gz" "${out}" && rm "${out}")
+          # Per-file checksum, joined at the end
+          (cd dist && shasum -a 256 "${out}.tar.gz" > "${out}.sha256")
           ls -la dist/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faultwall-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          retention-days: 1
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: |
+          cd dist
+          cat *.sha256 > checksums.txt
+          rm *.sha256
+          ls -la
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
