@@ -1,0 +1,39 @@
+# FaultWall — Permissive Policy Template
+#
+# Blocks only catastrophic operations. Good for trusted internal agents
+# or development environments where you want a safety net without friction.
+#
+# WARNING: Allows most writes. Only use with agents you trust.
+
+default_policy: allow
+
+blocked_functions:
+  - pg_sleep
+  - pg_sleep_for
+  - pg_sleep_until
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_read_file
+  - pg_ls_dir
+  - pg_execute_server_program
+  - lo_*
+  - dblink*
+
+agents:
+  my-agent:
+    description: "Permissive agent — only catastrophic ops blocked"
+    missions:
+      default:
+        tables:
+          - "public.*"
+        max_rows: 100000
+        max_query_time_ms: 60000
+    blocked_operations:
+      - DROP           # Never drop tables
+      - TRUNCATE       # Never empty tables
+      - GRANT          # Never change permissions
+      - REVOKE
+    # No blocked_tables — agent can read/write anything in public
+
+unidentified:
+  policy: monitor   # Log but don't block

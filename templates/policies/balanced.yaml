@@ -1,0 +1,58 @@
+# FaultWall — Balanced Policy Template
+#
+# Good default for AI agents with write access.
+# Blocks destructive operations and schema changes while allowing
+# typical read/write workflows (SELECT, INSERT, UPDATE with LIMIT).
+#
+# Agent identification via application_name:
+#   postgres://user:pass@localhost:5433/db?application_name=agent:my-agent:mission:default
+
+default_policy: deny
+
+# Globally blocked PostgreSQL functions (dangerous regardless of agent)
+blocked_functions:
+  - pg_sleep
+  - pg_sleep_for
+  - pg_sleep_until
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_read_file
+  - pg_read_binary_file
+  - pg_ls_dir
+  - pg_execute_server_program
+  - lo_*
+  - dblink*
+  - pg_catalog.*
+  - generate_series   # resource exhaustion
+  - set_config
+
+agents:
+  # Rename this to match your agent — must match application_name prefix
+  my-agent:
+    description: "Default balanced agent"
+    missions:
+      default:
+        tables:
+          - "public.*"          # Allow all tables in public schema
+        max_rows: 10000
+        max_query_time_ms: 30000
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+      - ALTER
+      - CREATE
+      - GRANT
+      - REVOKE
+      - COPY
+    blocked_tables:
+      - public.users           # Never expose user PII
+      - public.payments        # Never expose payment data
+      - pg_catalog.*
+      - information_schema.*
+
+# Unidentified connections (no agent: prefix) — monitor only
+unidentified:
+  policy: monitor
+  blocked_tables:
+    - pg_catalog.*
+    - information_schema.*

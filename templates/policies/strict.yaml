@@ -1,0 +1,55 @@
+# FaultWall — Strict (Read-Only) Policy Template
+#
+# For AI agents that should ONLY read data. No writes of any kind.
+# Ideal for: research agents, analytics, dashboards, Q&A bots.
+
+default_policy: deny
+
+blocked_functions:
+  - pg_sleep
+  - pg_sleep_for
+  - pg_sleep_until
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_read_file
+  - pg_read_binary_file
+  - pg_ls_dir
+  - pg_execute_server_program
+  - lo_*
+  - dblink*
+  - pg_catalog.*
+  - generate_series
+  - set_config
+
+agents:
+  my-agent:
+    description: "Read-only agent"
+    missions:
+      default:
+        tables:
+          - "public.*"
+        max_rows: 1000           # Smaller limit for read-only
+        max_query_time_ms: 15000
+    blocked_operations:
+      - INSERT
+      - UPDATE
+      - DELETE
+      - DROP
+      - TRUNCATE
+      - ALTER
+      - CREATE
+      - GRANT
+      - REVOKE
+      - COPY
+      - MERGE
+    blocked_tables:
+      - public.users
+      - public.payments
+      - pg_catalog.*
+      - information_schema.*
+
+unidentified:
+  policy: deny   # Strict = block unidentified entirely
+  blocked_tables:
+    - pg_catalog.*
+    - information_schema.*

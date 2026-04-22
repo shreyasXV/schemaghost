@@ -30,6 +30,30 @@ var (
 )
 
 func main() {
+	// Subcommands (init, agent-url, version, help) — handled before flag parsing.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "init":
+			if err := runInit(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
+		case "agent-url":
+			if err := runAgentURL(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
+		case "version", "-v", "--version":
+			fmt.Println("faultwall", Version)
+			return
+		case "help", "-h", "--help":
+			printRootHelp()
+			return
+		}
+	}
+
 	// Check for mode flags
 	mcpMode := false
 	tunerMode := false
