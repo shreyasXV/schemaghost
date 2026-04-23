@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -11,18 +12,31 @@ import (
 	"runtime"
 )
 
+//go:embed templates/dashboard.html
+var dashboardTemplateFS embed.FS
+
+//go:embed assets/logos/icon.png
+var faviconBytes []byte
+
 // handleFavicon serves the favicon from assets/logos/icon.png
 func handleFavicon(w http.ResponseWriter, r *http.Request) {
+	// Embedded binary (production)
+	if len(faviconBytes) > 0 {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(faviconBytes)
+		return
+	}
+
+	// Fallback: disk lookup (dev mode if embed is empty)
 	candidates := []string{
 		"assets/logos/icon.png",
 		"/app/assets/logos/icon.png",
 	}
-	// Try relative to source file
 	if _, file, _, ok := runtime.Caller(0); ok {
 		dir := filepath.Dir(file)
 		candidates = append(candidates, filepath.Join(dir, "assets/logos/icon.png"))
 	}
-	// Try relative to working directory
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates, filepath.Join(wd, "assets/logos/icon.png"))
 	}
@@ -45,8 +59,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmplPath := findTemplatePath()
-	tmpl, err := template.ParseFiles(tmplPath)
+	tmpl, err := loadDashboardTemplate()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("template error: %v", err), http.StatusInternalServerError)
 		return
@@ -68,6 +81,19 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.Execute(w, data); err != nil {
 		log.Printf("template render error: %v", err)
 	}
+}
+
+// loadDashboardTemplate loads the dashboard template from embedded FS first,
+// falling back to disk lookup for development workflows.
+func loadDashboardTemplate() (*template.Template, error) {
+	// Primary: embedded (works for installed binaries)
+	if data, err := dashboardTemplateFS.ReadFile("templates/dashboard.html"); err == nil {
+		return template.New("dashboard").Parse(string(data))
+	}
+
+	// Fallback: disk lookup (dev mode)
+	tmplPath := findTemplatePath()
+	return template.ParseFiles(tmplPath)
 }
 
 // handleTenants returns JSON tenant leaderboard
