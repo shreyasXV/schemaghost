@@ -1178,8 +1178,21 @@ func ExtractTablesRegex(query string) []string {
 
 // ── Helpers ──
 
+// isTableBlocked reports whether the referenced table matches any blocked entry.
+// Supports three match modes:
+//   - Exact match: "public.users" == "public.users"
+//   - Wildcard prefix: "pg_catalog.*" matches "pg_catalog.pg_user"
+//   - Schema-agnostic bare-name match: "users" matches blocklist "public.users"
+//     and "public.users" matches blocklist "users". Prevents the trivial bypass
+//     where Postgres search_path resolution hides the schema.
 func isTableBlocked(table string, blockedList []string) bool {
 	tableLower := strings.ToLower(table)
+	// Derive the unqualified leaf ("public.users" → "users", "users" → "users")
+	tableLeaf := tableLower
+	if idx := strings.LastIndex(tableLower, "."); idx >= 0 {
+		tableLeaf = tableLower[idx+1:]
+	}
+
 	for _, blocked := range blockedList {
 		blockedLower := strings.ToLower(blocked)
 		if strings.HasSuffix(blockedLower, ".*") {
@@ -1188,7 +1201,19 @@ func isTableBlocked(table string, blockedList []string) bool {
 			if strings.HasPrefix(tableLower, prefix) {
 				return true
 			}
-		} else if tableLower == blockedLower {
+			continue
+		}
+		if tableLower == blockedLower {
+			return true
+		}
+		// Schema-agnostic match: compare unqualified leaves in both directions.
+		// Blocklist "public.users" → bare "users" (matches "FROM users"),
+		// Blocklist "users" → bare "users" (matches "FROM public.users").
+		blockedLeaf := blockedLower
+		if idx := strings.LastIndex(blockedLower, "."); idx >= 0 {
+			blockedLeaf = blockedLower[idx+1:]
+		}
+		if tableLeaf == blockedLeaf {
 			return true
 		}
 	}
