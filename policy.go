@@ -772,6 +772,16 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	}
 
 	// Check mission policy
+	//
+	// Historical note (bug #3 from docs/compatibility.md, fixed Apr 27):
+	// this block previously did `return nil` when the agent carried a mission
+	// ID not present in their missions map AND default_policy != "deny".
+	// That short-circuited the global function blocklist check further down,
+	// letting any agent with an unknown mission bypass `blocked_functions`
+	// entirely (e.g. SELECT pg_sleep(9999) with PGAPPNAME=agent:x:mission:any:token:Y).
+	// Now we only run mission-scoped checks when a mission policy exists;
+	// absence of a policy under default-allow just skips mission checks
+	// and falls through to global checks (function blocklist, etc).
 	if identity.MissionID != "" {
 		missionPolicy, missionExists := agentPolicy.Missions[identity.MissionID]
 		if !missionExists {
@@ -787,33 +797,34 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 					Timestamp: time.Now(),
 				}
 			}
-			return nil
-		}
-
-		// Check tables against mission allowed list
-		if len(missionPolicy.Tables) > 0 {
-			for _, table := range tables {
-				if !isTableAllowed(table, missionPolicy.Tables) {
-					return &PolicyViolation{
-						AgentID:   identity.AgentID,
-						MissionID: identity.MissionID,
-						Query:     truncateQuery(query),
-						Reason:    "table_not_in_mission",
-						Table:     table,
-						Operation: operation,
-						PID:       pid,
-						Action:    "pending",
-						Timestamp: time.Now(),
+			// default_policy=allow: skip mission-scoped checks but CONTINUE
+			// through the rest of CheckQuery so global blocklists still apply.
+		} else {
+			// Check tables against mission allowed list
+			if len(missionPolicy.Tables) > 0 {
+				for _, table := range tables {
+					if !isTableAllowed(table, missionPolicy.Tables) {
+						return &PolicyViolation{
+							AgentID:   identity.AgentID,
+							MissionID: identity.MissionID,
+							Query:     truncateQuery(query),
+							Reason:    "table_not_in_mission",
+							Table:     table,
+							Operation: operation,
+							PID:       pid,
+							Action:    "pending",
+							Timestamp: time.Now(),
+						}
 					}
 				}
 			}
-		}
 
-		// Check mission conditions (for agents without profiles)
-		if agentPolicy.Profile == "" {
-			for _, op := range operations {
-				if v := checkConditions(missionPolicy.Conditions, op, query, identity, pid); v != nil {
-					return v
+			// Check mission conditions (for agents without profiles)
+			if agentPolicy.Profile == "" {
+				for _, op := range operations {
+					if v := checkConditions(missionPolicy.Conditions, op, query, identity, pid); v != nil {
+						return v
+					}
 				}
 			}
 		}
