@@ -1,0 +1,25 @@
+2026/04/27 02:33:44 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:35 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:35 [32m[1m[ALLOWED][0m agent=psql                 query=SELECT 1;
+2026/04/27 02:35:35 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:35 [32m[1m[ALLOWED][0m agent=psql                 query=SELECT 1;
+2026/04/27 02:35:51 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:51 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:51 [32m[1m[ALLOWED][0m agent=psql                 query=SELECT 1;
+2026/04/27 02:35:51 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:35:51 [32m[1m[ALLOWED][0m agent=psql                 query=SELECT 1;
+2026/04/27 02:35:51 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 [32m[1m[ALLOWED][0m agent=psql                 query=SELECT 1;
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 [31m[1m[BLOCKED][0m agent=psql                 reason=blocked_function:version  query=SELECT version();
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 [32m[1m[ALLOWED][0m agent=testagent/read       query=SELECT id, body FROM feedback WHERE id > 0;
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 [32m[1m[ALLOWED][0m agent=testagent/write      query=INSERT INTO feedback(user_id, body) VALUES (99, 'compat test');
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 [32m[1m[ALLOWED][0m agent=testagent/write      query=UPDATE feedback SET body='updated' WHERE user_id=99;
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest
+2026/04/27 02:36:03 Upstream TLS negotiated via SSLRequest

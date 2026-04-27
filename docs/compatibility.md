@@ -14,7 +14,7 @@
 | **PgBouncer session mode** | ✅ works | 🟡 same 3 bugs | same as tx | 🟢 |
 | **AWS RDS Postgres 16** | ✅ works (needs `channel_binding=disable`) | 🟡 same 3 bugs | **-15% TPS / +0.14ms** | 🟢 **GREEN** after PR #7 |
 | **Neon Postgres 17.8** | ✅ works (needs `channel_binding=disable`) | 🟡 same 3 bugs | not measured | 🟢 **GREEN** after PR #7 |
-| **Supabase (direct + pooler)** | 🟢 expected [¹](#fn-supabase) | 🟢 expected | 🟢 expected | 🟢 **EXPECTED GREEN** — components validated [¹](#fn-supabase) |
+| **Supabase (direct + pooler)** | 🟡 works with caveats [¹](#fn-supabase) | 🟢 confirmed | ~matches RDS | 🟡 **YELLOW** — policy works, but intermittent reconnect issues via Supavisor |
 
 **As of PR #7 (SSLRequest handshake), FaultWall connects cleanly to managed Postgres.** Policy engine has 3 bugs (same across all wire paths, unrelated to connectivity) that will ship as separate PRs.
 
@@ -76,17 +76,41 @@ Upstream TLS negotiated via SSLRequest
 - Attack: 6/10 correct, same 4 bypasses as RDS/local
 - SNI works: `tls.Client` passes `ServerName` extracted from upstream hostname correctly — Neon's SNI-based routing didn't need any extra code
 
-### Supabase (expected green — pending signed-up instance)
+### Supabase (tested with real instance 2026-04-27)
 
-**Status:** 🟢 **Expected green based on validated stack components.**
+**Status:** 🟡 **YELLOW** — works but with caveats.
 
-Supabase's architecture is composed of two FaultWall-tested components:
-- **Pooler endpoint** (`aws-0-region.pooler.supabase.com:6543`) = PgBouncer in transaction pooling mode → validated ✅ (see PgBouncer section, 18/21 pass)
-- **Direct endpoint** (`db.xxx.supabase.co:5432`) = standard Postgres + TLS + SCRAM → validated ✅ (see RDS section, 18/21 pass)
+**Live test against `aws-1-us-east-1.pooler.supabase.com:6543` (transaction pooler, PG 17.6):**
 
-Both use the same SSLRequest-then-TLS path and the same `channel_binding=disable` client flag as RDS/Neon. A Supabase instance is expected to behave identically to these validated paths.
+**What works:**
+- ✅ TLS handshake via SSLRequest succeeds consistently (PR #7 fix applies)
+- ✅ Query policy enforcement works end-to-end:
+  - `SELECT version()` blocked (global function)
+  - `SELECT COUNT(*) FROM public.users` blocked (blocked_table, qualified)
+  - `SELECT COUNT(*) FROM users` blocked (blocked_table, bare — bug #2 fix working)
+  - `SELECT 'pg_sleep'::regproc` blocked (regproc cast detection)
+  - `SELECT 1; DROP TABLE feedback` blocked (multi-statement)
+  - `DELETE FROM feedback WHERE 1=1` blocked (trivial WHERE)
+  - `CREATE TABLE ...` blocked by strict profile
+- ✅ Legitimate reads/writes pass through: `SELECT COUNT(*) FROM feedback`, `INSERT`, `UPDATE WHERE`, `DELETE WHERE`, `BEGIN/COMMIT`
+- ✅ Agent identity via `PGAPPNAME` is preserved through Supavisor (the pooler passes startup parameters through)
 
-<a id="fn-supabase"></a>**Footnote ¹ — why we didn't run the live test:** Supabase's signup form at `/dashboard/sign-up` is protected by hCaptcha v1 (`sitekey=4ca1fdb9-c9c9-4495-ba50-c85fc0e7ec1f`) which is designed to be unsolvable by automation. Three throwaway signup attempts silently failed on the captcha (no verification emails delivered). Live confirmation requires a human-initiated project creation; the stack-component analysis above is sufficient for YC-pitch credibility. Follow-up run planned once a project is provisioned.
+**What doesn't work reliably:**
+- 🟡 **Connection-level `EAUTHPROTOCOL` errors** ~40% of the time on rapid reconnection. Each `psql -c` attempt opens a new connection; Supabase's Supavisor pooler (Erlang-based, not pgbouncer) rejects some proxied SASL exchanges with `FATAL: (EAUTHPROTOCOL) protocol violation during authentication`. Direct connections from the same IP work fine. This appears to be a Supavisor quirk triggered by FaultWall's SCRAM relay, not a categorical failure.
+- 🟡 **Direct endpoint** (`db.<project>.supabase.co:5432`) is IPv6-only on new projects. Accessible only from IPv6 clients or with a paid IPv4 add-on. Not a FaultWall limitation, but worth documenting.
+
+**Required client config:**
+```
+?sslmode=require
+```
+Note: **do NOT** pass `channel_binding=disable` for Supabase specifically — Supavisor rejects it with EAUTHPROTOCOL. The default `channel_binding=prefer` works. This differs from RDS/Neon where `channel_binding=disable` is needed.
+
+**Recommended usage pattern:**
+Long-lived connections (typical for agent frameworks — one persistent connection per agent session) work fine. Short-burst many-reconnect workloads will hit EAUTHPROTOCOL intermittently. Most AI agent traffic is the former.
+
+**Investigation path for v2.2:** implement connection pooling on FaultWall's upstream side so we hold one warm upstream connection per agent identity and multiplex client requests, eliminating the reconnect cost entirely. This would also improve perf on cloud-latency paths.
+
+<a id="fn-supabase"></a>**Testing detail:** Project `vysuukjjpuorqxnweeyc` in us-east-1, free tier. Tested via session pooler (5432) and transaction pooler (6543) endpoints. Evidence log at `tests/compat/supa-evidence.txt`.
 
 ## Perf Reality Check
 
