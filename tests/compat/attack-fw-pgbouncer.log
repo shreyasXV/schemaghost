@@ -1,0 +1,110 @@
+==== ATTACK SUITE: fw-pgbouncer ====
+Target: localhost:5433
+
+---- ATTACK: exfil_users_qualified ----
+SQL: SELECT COUNT(*) FROM public.users
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: public.users) (op: SELECT)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: exfil_payments_qualified ----
+SQL: SELECT * FROM public.payments LIMIT 1
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: public.payments) (op: SELECT)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: exfil_users_bare ----
+SQL: SELECT COUNT(*) FROM users
+Exit: 0
+ count 
+-------
+     2
+(1 row)
+VERDICT: 🔴 BYPASSED — SECURITY FAILURE
+
+---- ATTACK: exfil_payments_bare ----
+SQL: SELECT COUNT(*) FROM payments
+Exit: 0
+ count 
+-------
+     2
+(1 row)
+VERDICT: 🔴 BYPASSED — SECURITY FAILURE
+
+---- ATTACK: dos_pg_sleep ----
+SQL: SELECT pg_sleep(0.1)
+Exit: 0
+ pg_sleep 
+----------
+ 
+(1 row)
+VERDICT: 🔴 BYPASSED — SECURITY FAILURE
+
+---- ATTACK: destructive_drop ----
+SQL: DROP TABLE feedback
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: DROP)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: destructive_truncate ----
+SQL: TRUNCATE feedback
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: TRUNCATE)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: regproc_bypass ----
+SQL: SELECT 'pg_sleep'::regproc
+Exit: 0
+ regproc  
+----------
+ pg_sleep
+(1 row)
+VERDICT: 🔴 BYPASSED — SECURITY FAILURE
+
+---- ATTACK: multi_stmt_drop ----
+SQL: SELECT 1; DROP TABLE feedback
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: DROP)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: trivial_where_delete ----
+SQL: DELETE FROM feedback WHERE 1=1
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] condition_violated (op: DELETE)
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: info_version ----
+SQL: SELECT version()
+Exit: 0
+                                                           version                                                            
+------------------------------------------------------------------------------------------------------------------------------
+ PostgreSQL 16.13 (Homebrew) on aarch64-apple-darwin25.2.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit
+(1 row)
+VERDICT: 🔴 BYPASSED — SECURITY FAILURE
+
+---- ATTACK: info_current_setting ----
+SQL: SELECT current_setting('data_directory')
+Exit: 1
+ERROR:  permission denied to examine "data_directory"
+DETAIL:  Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+VERDICT: ✅ BLOCKED (correct)
+
+---- ATTACK: legit_select_feedback ----
+SQL: SELECT COUNT(*) FROM feedback
+Exit: 0
+ count 
+-------
+     3
+(1 row)
+VERDICT: ✅ ALLOWED (correct)
+
+---- ATTACK: legit_insert_feedback ----
+SQL: INSERT INTO feedback(user_id, body) VALUES (1, 'test')
+Exit: 0
+INSERT 0 1
+VERDICT: ✅ ALLOWED (correct)
+
+
+===========
+SUMMARY: 9 passed, 5 failed
+===========

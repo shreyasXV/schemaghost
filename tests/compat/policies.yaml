@@ -1,0 +1,24 @@
+# FaultWall compatibility test policies
+default_policy: allow
+
+blocked_functions:
+  - pg_sleep
+  - pg_read_file
+  - lo_export
+
+agents:
+  testagent:
+    description: "Test agent for compatibility matrix"
+    auth_token: "test-secret-abc123"
+    profile: standard
+    blocked_tables:
+      - public.users
+      - public.payments
+
+  readonly-agent:
+    description: "Read-only agent"
+    auth_token: "readonly-xyz789"
+    profile: strict
+
+unidentified:
+  policy: allow
