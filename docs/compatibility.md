@@ -127,9 +127,9 @@ Long-lived connections (typical for agent frameworks — one persistent connecti
 
 | # | Bug | Status |
 |---|---|---|
-| 1 | Upstream TLS doesn't do SSLRequest handshake | ✅ **FIXED** in PR #7 |
-| 2 | Schema-unqualified table refs bypass `blocked_tables` (`users` doesn't match `public.users`) | ✅ **FIXED** in PR #8 (pending merge) |
-| 3 | Mission early-return skips global `blocked_functions` when agent has mission not in their missions map + `default_policy: allow` | ✅ **FIXED** in PR #9 (pending merge) |
+| 1 | Upstream TLS doesn't do SSLRequest handshake | ✅ **FIXED** in PR #7 (merged) |
+| 2 | Schema-unqualified table refs bypass `blocked_tables` (`users` doesn't match `public.users`) | ✅ **FIXED** in PR #8 (merged) |
+| 3 | Mission early-return skips global `blocked_functions` when agent has mission not in their missions map + `default_policy: allow` | ✅ **FIXED** in PR #9 (merged) |
 | 4 | Regproc detection doesn't fire under certain mission states | ✅ resolved by PR #9 (validated in merged-branch test) |
 | 5 | `version()` and similar info-leak functions not in default blocklist | ✅ not a bug — production `policies.yaml` already blocks `version`; test config was minimal |
 
