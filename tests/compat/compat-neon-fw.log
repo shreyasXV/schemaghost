@@ -1,0 +1,187 @@
+==== neon-fw ====
+---- 01. basic_select_1 (expect=pass) ----
+SQL: SELECT 1;
+Exit: 0
+ ?column? 
+----------
+        1
+(1 row)
+
+VERDICT: PASS
+---- 02. version_query (expect=pass) ----
+SQL: SELECT version();
+Exit: 0
+                                                      version                                                      
+-------------------------------------------------------------------------------------------------------------------
+ PostgreSQL 17.8 (130b160) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit
+(1 row)
+
+VERDICT: PASS
+---- 03. current_user (expect=pass) ----
+SQL: SELECT current_user, current_database();
+Exit: 0
+ current_user | current_database 
+--------------+------------------
+ neondb_owner | neondb
+(1 row)
+
+VERDICT: PASS
+---- 04. select_feedback (expect=pass) ----
+SQL: SELECT COUNT(*) FROM feedback;
+Exit: 0
+ count 
+-------
+     2
+(1 row)
+
+VERDICT: PASS
+---- 05. select_feedback_with_where (expect=pass) ----
+SQL: SELECT id, body FROM feedback WHERE id > 0;
+Exit: 0
+ id |  body   
+----+---------
+  1 | test
+  2 | another
+(2 rows)
+
+VERDICT: PASS
+---- 06. insert_feedback (expect=pass) ----
+SQL: INSERT INTO feedback(user_id, body) VALUES (99, 'compat test');
+Exit: 0
+INSERT 0 1
+
+VERDICT: PASS
+---- 07. update_feedback_with_where (expect=pass) ----
+SQL: UPDATE feedback SET body='updated' WHERE user_id=99;
+Exit: 0
+UPDATE 1
+
+VERDICT: PASS
+---- 08. delete_feedback_with_where (expect=pass) ----
+SQL: DELETE FROM feedback WHERE user_id=99;
+Exit: 0
+DELETE 1
+
+VERDICT: PASS
+---- 09. blocked_table_users (expect=fail) ----
+SQL: SELECT COUNT(*) FROM public.users;
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: public.users) (op: SELECT)
+
+VERDICT: PASS (correctly blocked)
+---- 10. blocked_table_payments (expect=fail) ----
+SQL: SELECT COUNT(*) FROM public.payments;
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: public.payments) (op: SELECT)
+
+VERDICT: PASS (correctly blocked)
+---- 11. blocked_pg_sleep (expect=fail) ----
+SQL: SELECT pg_sleep(0.1);
+Exit: 0
+ pg_sleep 
+----------
+ 
+(1 row)
+
+VERDICT: FAIL (should have been blocked!)
+---- 12. strict_allows_select (expect=pass) ----
+SQL: SELECT 1;
+Exit: 0
+ ?column? 
+----------
+        1
+(1 row)
+
+VERDICT: PASS
+---- 13. strict_blocks_ddl (expect=fail) ----
+SQL: CREATE TABLE tmp_test(id int);
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: CREATE)
+
+VERDICT: PASS (correctly blocked)
+---- 14. prepare_execute (expect=pass) ----
+SQL: PREPARE s1(int) AS SELECT id FROM feedback WHERE id=$1; EXECUTE s1(1); DEALLOCATE s1;
+Exit: 0
+PREPARE
+ id 
+----
+  1
+(1 row)
+
+DEALLOCATE
+
+VERDICT: PASS
+---- 15. transaction_commit (expect=pass) ----
+SQL: BEGIN; SELECT 1; COMMIT;
+Exit: 0
+BEGIN
+ ?column? 
+----------
+        1
+(1 row)
+
+COMMIT
+
+VERDICT: PASS
+---- 16. transaction_rollback (expect=pass) ----
+SQL: BEGIN; SELECT 1; ROLLBACK;
+Exit: 0
+BEGIN
+ ?column? 
+----------
+        1
+(1 row)
+
+ROLLBACK
+
+VERDICT: PASS
+---- 17. multi_stmt_allowed (expect=pass) ----
+SQL: SELECT 1; SELECT 2;
+Exit: 0
+ ?column? 
+----------
+        1
+(1 row)
+
+ ?column? 
+----------
+        2
+(1 row)
+
+VERDICT: PASS
+---- 18. set_work_mem (expect=pass) ----
+SQL: SET work_mem = '64MB'; SHOW work_mem;
+Exit: 0
+SET
+ work_mem 
+----------
+ 64MB
+(1 row)
+
+VERDICT: PASS
+---- 19. temp_table (expect=pass) ----
+SQL: CREATE TEMP TABLE tmp(id int); INSERT INTO tmp VALUES (1); SELECT COUNT(*) FROM tmp;
+Exit: 0
+CREATE TABLE
+INSERT 0 1
+ count 
+-------
+     1
+(1 row)
+
+VERDICT: PASS
+---- 20. empty_query (expect=pass) ----
+SQL: ;
+Exit: 0
+
+
+VERDICT: PASS
+---- 21. schema_qualified (expect=pass) ----
+SQL: SELECT COUNT(*) FROM public.feedback;
+Exit: 0
+ count 
+-------
+     2
+(1 row)
+
+VERDICT: PASS
