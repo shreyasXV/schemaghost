@@ -5,6 +5,8 @@ blocked_functions:
   - pg_sleep
   - pg_read_file
   - lo_export
+  - version
+  - current_setting
 
 agents:
   testagent:
