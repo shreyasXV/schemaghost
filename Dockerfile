@@ -11,6 +11,7 @@ RUN go mod download
 # Copy source
 COPY *.go ./
 COPY templates/ ./templates/
+COPY assets/ ./assets/
 COPY policies.yaml ./
 
 # Build static binary with CGo (required for pg_query_go)
