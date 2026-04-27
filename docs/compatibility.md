@@ -128,17 +128,41 @@ Long-lived connections (typical for agent frameworks — one persistent connecti
 | # | Bug | Status |
 |---|---|---|
 | 1 | Upstream TLS doesn't do SSLRequest handshake | ✅ **FIXED** in PR #7 |
-| 2 | Schema-unqualified table refs bypass `blocked_tables` (`users` doesn't match `public.users`) | 🔴 open — next PR |
-| 3 | Mission early-return skips global `blocked_functions` when agent has mission not in their missions map + `default_policy: allow` | 🔴 open — next PR |
-| 4 | Regproc detection doesn't fire under certain mission states (likely depends on #3) | 🔴 open — probably resolved by #3 fix |
-| 5 | `version()` and similar info-leak functions not in default blocklist | 🟡 open — config-only, ship with the doc update |
+| 2 | Schema-unqualified table refs bypass `blocked_tables` (`users` doesn't match `public.users`) | ✅ **FIXED** in PR #8 (pending merge) |
+| 3 | Mission early-return skips global `blocked_functions` when agent has mission not in their missions map + `default_policy: allow` | ✅ **FIXED** in PR #9 (pending merge) |
+| 4 | Regproc detection doesn't fire under certain mission states | ✅ resolved by PR #9 (validated in merged-branch test) |
+| 5 | `version()` and similar info-leak functions not in default blocklist | ✅ not a bug — production `policies.yaml` already blocks `version`; test config was minimal |
 
-Bugs 2-5 are policy-engine bugs. They're **path-independent** — identical behavior observed across local, pgbouncer, RDS, Neon. Fixable in days.
+## Client Config Matrix (SCRAM / channel binding per provider)
+
+Different managed Postgres providers have different SCRAM requirements when accessed through a transparent TLS proxy. This table saves operators a debug session:
+
+| Provider | `sslmode` | `channel_binding` | Notes |
+|---|---|---|---|
+| **Self-hosted Postgres** | `require` (if TLS configured) or `disable` | any | Most permissive. Either works. |
+| **PgBouncer** (local or cloud) | matches upstream config | `disable` | Pooler doesn't advertise SCRAM-PLUS. |
+| **AWS RDS / Aurora** | `require` | **`disable`** ← required | Offers SCRAM-SHA-256-PLUS; without this flag, client refuses the proxied connection. |
+| **Neon** | `require` | **`disable`** ← required | Same pattern as RDS. SNI works out of the box via `tls.Config.ServerName`. |
+| **Supabase (pooler)** | `require` | **unset** or `prefer` ← required | Supavisor rejects `channel_binding=disable` with `EAUTHPROTOCOL`. Must leave it at libpq default. |
+
+**Why this exists:** SCRAM-SHA-256-PLUS (channel binding) cryptographically binds auth to the TLS channel. In a transparent TLS proxy like FaultWall, the client↔FaultWall channel and FaultWall↔upstream channel are different TLS sessions — binding can't match. Every SCRAM-aware driver (libpq 13+, pgx, psycopg 3, JDBC, node-postgres) exposes a `channel_binding` knob. Operators set it to `disable` (where supported) or accept that transparent TLS proxying is incompatible with strict channel binding. This is a fundamental constraint of the proxy model, not a FaultWall-specific issue — the same config matrix applies to Hoop.dev, ProxySQL, pgbouncer, and every other L7 Postgres proxy.
+
+## IPv6-Only Endpoints (Supabase)
+
+Supabase's **direct endpoint** (`db.<project>.supabase.co:5432`) is **IPv6-only** on free-tier projects as of 2026. Many corporate EC2/VPC setups, GitHub Actions runners, and older Docker networks are IPv4-only and will fail to resolve the hostname before FaultWall even enters the picture.
+
+**Mitigation:**
+- Use Supabase's **pooler endpoint** instead (`aws-<n>-<region>.pooler.supabase.com:5432` or `:6543`) — explicitly IPv4-compatible
+- OR add the paid IPv4 add-on to the Supabase project
+- OR run FaultWall on an IPv6-reachable host (modern ECS/EKS with dual-stack VPC is fine)
+
+This is not a FaultWall limitation — the DNS resolution fails before any TCP/TLS handshake begins.
 
 ## Documentation Gotcha (not a bug)
 
-**Required client config when connecting through FaultWall to managed Postgres:**
+**Required client config when connecting through FaultWall to managed Postgres:** see the [Client Config Matrix](#client-config-matrix-scram--channel-binding-per-provider) above for exact flags per provider. TL;DR — always pass `sslmode=require` when the upstream requires TLS, and set `channel_binding` per the provider's quirks (most want `disable`, Supabase wants it unset).
 
+Example for RDS:
 ```
 postgresql://user:pass@faultwall:5433/db?sslmode=require&channel_binding=disable
 ```
