@@ -25,6 +25,54 @@ const (
 	colorBold   = "\033[1m"
 )
 
+// dialUpstream connects to the upstream Postgres, performing SSLRequest
+// negotiation when tlsConfig is non-nil (required by RDS/Aurora/Cloud SQL/etc).
+func dialUpstream(upstreamAddr string, tlsConfig *tls.Config) (net.Conn, error) {
+	conn, err := net.Dial("tcp", upstreamAddr)
+	if err != nil {
+		return nil, fmt.Errorf("upstream dial failed (%s): %w", upstreamAddr, err)
+	}
+	if tlsConfig == nil {
+		return conn, nil
+	}
+
+	// PostgreSQL SSLRequest: 8 bytes total
+	// [4 bytes length = 8] [4 bytes code = 80877103 (0x04D2162F)]
+	var sslReq [8]byte
+	binary.BigEndian.PutUint32(sslReq[0:4], 8)
+	binary.BigEndian.PutUint32(sslReq[4:8], 80877103)
+	if _, err := conn.Write(sslReq[:]); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send SSLRequest to upstream: %w", err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var resp [1]byte
+	if _, err := io.ReadFull(conn, resp[:]); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read SSLRequest response from upstream: %w", err)
+	}
+	conn.SetReadDeadline(time.Time{})
+
+	switch resp[0] {
+	case 'S':
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.Handshake(); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("upstream TLS handshake failed: %w", err)
+		}
+		log.Printf("Upstream TLS negotiated via SSLRequest")
+		return tlsConn, nil
+	case 'N':
+		conn.Close()
+		log.Printf("Upstream rejected TLS (SSLRequest → N) — check RDS/server TLS config")
+		return nil, fmt.Errorf("upstream does not support TLS but UPSTREAM_TLS was set")
+	default:
+		conn.Close()
+		return nil, fmt.Errorf("unexpected SSLRequest response from upstream: 0x%02X", resp[0])
+	}
+}
+
 func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string, upstreamTLS, upstreamTLSSkipVerify bool) {
 	var tlsConfig *tls.Config
 	if tlsCert != "" && tlsKey != "" {
@@ -115,13 +163,7 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 				return
 			}
 		} else if proto == 80877102 { // CancelRequest
-			var upstream net.Conn
-			var dialErr error
-			if upstreamTLSConfig != nil {
-				upstream, dialErr = tls.Dial("tcp", upstreamAddr, upstreamTLSConfig)
-			} else {
-				upstream, dialErr = net.Dial("tcp", upstreamAddr)
-			}
+			upstream, dialErr := dialUpstream(upstreamAddr, upstreamTLSConfig)
 			if dialErr == nil {
 				upstream.Write(startupBuf)
 				upstream.Close()
@@ -163,15 +205,10 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		}
 	}
 
-	// 3. Connect to upstream Postgres (with optional TLS)
-	var upstream net.Conn
-	if upstreamTLSConfig != nil {
-		upstream, err = tls.Dial("tcp", upstreamAddr, upstreamTLSConfig)
-	} else {
-		upstream, err = net.Dial("tcp", upstreamAddr)
-	}
+	// 3. Connect to upstream Postgres (with optional TLS via SSLRequest)
+	upstream, err := dialUpstream(upstreamAddr, upstreamTLSConfig)
 	if err != nil {
-		log.Printf("Proxy: upstream dial failed (%s): %v", upstreamAddr, err)
+		log.Printf("Proxy: %v", err)
 		return
 	}
 	defer upstream.Close()
