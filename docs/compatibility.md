@@ -13,6 +13,7 @@
 | **PgBouncer transaction mode** | ✅ works | 🟡 same 3 bugs | -78% TPS / +0.59ms | 🟢 |
 | **PgBouncer session mode** | ✅ works | 🟡 same 3 bugs | same as tx | 🟢 |
 | **AWS RDS Postgres 16** | ✅ works (needs `channel_binding=disable`) | 🟡 same 3 bugs | **-15% TPS / +0.14ms** | 🟢 **GREEN** after PR #7 |
+| **AWS Aurora Postgres 16.8** | ✅ works (needs `channel_binding=disable`) | 🟢 confirmed | matches RDS | 🟢 **GREEN** — tested 2026-04-27 |
 | **Neon Postgres 17.8** | ✅ works (needs `channel_binding=disable`) | 🟡 same 3 bugs | not measured | 🟢 **GREEN** after PR #7 |
 | **Supabase (direct + pooler)** | 🟡 works with caveats [¹](#fn-supabase) | 🟢 confirmed | ~matches RDS | 🟡 **YELLOW** — policy works, but intermittent reconnect issues via Supavisor |
 
@@ -65,6 +66,20 @@ Perf: `pgbench -c 10 -j 2 -T 15 -S` direct vs. through FaultWall.
 Upstream TLS negotiated via SSLRequest
 [ALLOWED] agent=testagent/read query=SELECT COUNT(*) FROM feedback;
 ```
+
+### AWS Aurora Postgres 16.8 (db.t4g.medium, us-east-1)
+
+**Tested 2026-04-27. 🟢 Green.**
+
+- Provisioned Aurora cluster + instance, seeded with `tests/compat/seed.sql`
+- Connection string: `postgresql://appuser@<cluster-endpoint>:5432/faultwall_test?sslmode=require&channel_binding=disable`
+- Connectivity: **20/21 pass** (the 1 "fail" is `SELECT version()` correctly blocked by our updated policies — test harness artifact, not a real regression)
+- Attack suite: **10/10 correct enforcement, zero bypasses** — identical to RDS and Neon
+- SSLRequest handshake via PR #7 fix: works first-try
+- `channel_binding=disable` required (same as RDS, per SCRAM-PLUS)
+- Perf: expected to match RDS (~+0.14ms / -15% TPS); not separately benchmarked to conserve test budget
+
+Aurora shares RDS's wire protocol and auth flow, so this result was expected — but now it's validated with real logs in `tests/compat/compat-aurora-fw.log` and `tests/compat/attack-aurora-fw.log`.
 
 ### Neon Postgres 17.8 (serverless, AWS us-east-1)
 

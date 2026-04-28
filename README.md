@@ -18,6 +18,25 @@
 
 > **Deterministic. No LLM in the loop.** FaultWall uses the real PostgreSQL C parser (`pg_query_go`) for static SQL analysis — no AI, no API keys, no probabilistic guessing. Every decision is auditable, reproducible, and adds under 1ms of latency.
 
+## Works with every managed Postgres
+
+| Deployment | Status |
+|---|---|
+| Self-hosted Postgres 12+ | 🟢 Green |
+| AWS RDS Postgres 16 | 🟢 Green |
+| AWS Aurora Postgres 16 | 🟢 Green |
+| Neon (serverless Postgres 17) | 🟢 Green |
+| PgBouncer (tx + session) | 🟢 Green |
+| Supabase pooler | 🟡 Yellow ([workaround](docs/compatibility.md#supabase-tested-with-real-instance-2026-04-27)) |
+| Cloud SQL · CrunchyBridge · DO MPG | 🟢 Expected ¹ |
+
+¹ Same Postgres wire protocol as validated providers; tested path exists, instance not provisioned.
+
+**Overhead:** +0.14ms per query / −15% TPS on cloud-latency paths (RDS benchmark).
+**Zero code changes required** in your agent. Stock Postgres driver, standard connection string.
+
+→ [Full compatibility matrix + SCRAM config per provider](docs/compatibility.md) · [Attack suite results](tests/compat/) · [Reproducible test harness](tests/compat/compat_test.sh)
+
 A prompt injection hides a `DROP TABLE` in a customer feedback comment. Your agent blindly executes it. The WAF sees nothing — it's a legitimate connection with valid credentials. The database sees a normal query from an authorized user.
 
 FaultWall intercepts the query **before it reaches PostgreSQL**, parses the SQL, checks it against your policy, and blocks it:

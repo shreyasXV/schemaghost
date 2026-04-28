@@ -1,0 +1,241 @@
+==== FaultWall Compatibility: aurora-fw ====
+Target: localhost:5433 / faultwall_test as appuser
+Extra psql args: sslmode=require&channel_binding=disable
+Started: 2026-04-27T05:58:49Z
+
+---- TEST: 01. basic_select_1 (expect=pass) ----
+SQL: SELECT 1;
+Exit: 0
+Output:
+ ?column? 
+----------
+        1
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 02. version_query (expect=pass) ----
+SQL: SELECT version();
+Exit: 1
+Output:
+ERROR:  [BLOCKED by FaultWall] blocked_function:version (op: SELECT)
+
+VERDICT: FAIL
+
+---- TEST: 03. current_user (expect=pass) ----
+SQL: SELECT current_user, current_database();
+Exit: 0
+Output:
+ current_user | current_database 
+--------------+------------------
+ appuser      | faultwall_test
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 04. select_feedback (expect=pass) ----
+SQL: SELECT COUNT(*) FROM feedback;
+Identity: agent:testagent:mission:read:token:test-secret-abc123
+Exit: 0
+Output:
+ count 
+-------
+     2
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 05. select_feedback_with_where (expect=pass) ----
+SQL: SELECT id, body FROM feedback WHERE id > 0;
+Identity: agent:testagent:mission:read:token:test-secret-abc123
+Exit: 0
+Output:
+ id |       body       
+----+------------------
+  1 | test feedback
+  2 | another feedback
+(2 rows)
+
+VERDICT: PASS
+
+---- TEST: 06. insert_feedback (expect=pass) ----
+SQL: INSERT INTO feedback(user_id, body) VALUES (99, 'compat test');
+Identity: agent:testagent:mission:write:token:test-secret-abc123
+Exit: 0
+Output:
+INSERT 0 1
+
+VERDICT: PASS
+
+---- TEST: 07. update_feedback_with_where (expect=pass) ----
+SQL: UPDATE feedback SET body='updated' WHERE user_id=99;
+Identity: agent:testagent:mission:write:token:test-secret-abc123
+Exit: 0
+Output:
+UPDATE 1
+
+VERDICT: PASS
+
+---- TEST: 08. delete_feedback_with_where (expect=pass) ----
+SQL: DELETE FROM feedback WHERE user_id=99;
+Identity: agent:testagent:mission:write:token:test-secret-abc123
+Exit: 0
+Output:
+DELETE 1
+
+VERDICT: PASS
+
+---- TEST: 09. blocked_table_users (expect=fail) ----
+SQL: SELECT COUNT(*) FROM users;
+Identity: agent:testagent:mission:attack:token:test-secret-abc123
+Exit: 1
+Output:
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: users) (op: SELECT)
+
+VERDICT: PASS (correctly blocked)
+
+---- TEST: 10. blocked_table_payments (expect=fail) ----
+SQL: SELECT COUNT(*) FROM payments;
+Identity: agent:testagent:mission:attack:token:test-secret-abc123
+Exit: 1
+Output:
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: payments) (op: SELECT)
+
+VERDICT: PASS (correctly blocked)
+
+---- TEST: 11. blocked_pg_sleep (expect=fail) ----
+SQL: SELECT pg_sleep(0.1);
+Identity: agent:testagent:mission:attack:token:test-secret-abc123
+Exit: 1
+Output:
+ERROR:  [BLOCKED by FaultWall] blocked_function:pg_sleep (op: SELECT)
+
+VERDICT: PASS (correctly blocked)
+
+---- TEST: 12. strict_allows_select (expect=pass) ----
+SQL: SELECT 1;
+Identity: agent:readonly-agent:mission:read:token:readonly-xyz789
+Exit: 0
+Output:
+ ?column? 
+----------
+        1
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 13. strict_blocks_ddl (expect=fail) ----
+SQL: CREATE TABLE tmp_test(id int);
+Identity: agent:readonly-agent:mission:attack:token:readonly-xyz789
+Exit: 1
+Output:
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: CREATE)
+
+VERDICT: PASS (correctly blocked)
+
+---- TEST: 14. prepare_execute (expect=pass) ----
+SQL: PREPARE s1(int) AS SELECT id FROM feedback WHERE id=$1; EXECUTE s1(1); DEALLOCATE s1;
+Exit: 0
+Output:
+PREPARE
+ id 
+----
+  1
+(1 row)
+
+DEALLOCATE
+
+VERDICT: PASS
+
+---- TEST: 15. transaction_commit (expect=pass) ----
+SQL: BEGIN; SELECT 1; COMMIT;
+Exit: 0
+Output:
+BEGIN
+ ?column? 
+----------
+        1
+(1 row)
+
+COMMIT
+
+VERDICT: PASS
+
+---- TEST: 16. transaction_rollback (expect=pass) ----
+SQL: BEGIN; SELECT 1; ROLLBACK;
+Exit: 0
+Output:
+BEGIN
+ ?column? 
+----------
+        1
+(1 row)
+
+ROLLBACK
+
+VERDICT: PASS
+
+---- TEST: 17. multi_stmt_allowed (expect=pass) ----
+SQL: SELECT 1; SELECT 2;
+Exit: 0
+Output:
+ ?column? 
+----------
+        1
+(1 row)
+
+ ?column? 
+----------
+        2
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 18. set_work_mem (expect=pass) ----
+SQL: SET work_mem = '64MB'; SHOW work_mem;
+Exit: 0
+Output:
+SET
+ work_mem 
+----------
+ 64MB
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 19. temp_table (expect=pass) ----
+SQL: CREATE TEMP TABLE tmp(id int); INSERT INTO tmp VALUES (1); SELECT COUNT(*) FROM tmp;
+Exit: 0
+Output:
+CREATE TABLE
+INSERT 0 1
+ count 
+-------
+     1
+(1 row)
+
+VERDICT: PASS
+
+---- TEST: 20. empty_query (expect=pass) ----
+SQL: ;
+Exit: 0
+Output:
+
+
+VERDICT: PASS
+
+---- TEST: 21. schema_qualified (expect=pass) ----
+SQL: SELECT COUNT(*) FROM public.feedback;
+Exit: 0
+Output:
+ count 
+-------
+     2
+(1 row)
+
+VERDICT: PASS
+
+
+===========
+SUMMARY: 20 passed, 1 failed
+===========

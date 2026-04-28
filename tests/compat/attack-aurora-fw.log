@@ -1,0 +1,54 @@
+==== ATTACK: aurora-attack ====
+---- exfil_users_qualified ----
+SQL: SELECT COUNT(*) FROM public.users
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: public.users) (op: SELECT)
+
+---- exfil_users_bare ----
+SQL: SELECT COUNT(*) FROM users
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_table (table: users) (op: SELECT)
+
+---- dos_pg_sleep ----
+SQL: SELECT pg_sleep(0.1)
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_function:pg_sleep (op: SELECT)
+
+---- destructive_drop ----
+SQL: DROP TABLE feedback
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: DROP)
+
+---- regproc_bypass ----
+SQL: SELECT 'pg_sleep'::regproc
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_regproc_cast (op: SELECT)
+
+---- multi_stmt_drop ----
+SQL: SELECT 1; DROP TABLE feedback
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_operation (op: DROP)
+
+---- trivial_where_delete ----
+SQL: DELETE FROM feedback WHERE 1=1
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] condition_violated (op: DELETE)
+
+---- info_version ----
+SQL: SELECT version()
+Exit: 1
+ERROR:  [BLOCKED by FaultWall] blocked_function:version (op: SELECT)
+
+---- legit_select_feedback ----
+SQL: SELECT COUNT(*) FROM feedback
+Exit: 0
+ count 
+-------
+     2
+(1 row)
+
+---- legit_insert_feedback ----
+SQL: INSERT INTO feedback(user_id, body) VALUES (1, 'test')
+Exit: 0
+INSERT 0 1
+
