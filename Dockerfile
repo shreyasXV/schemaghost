@@ -13,8 +13,11 @@ COPY *.go ./
 COPY templates/ ./templates/
 COPY policies.yaml ./
 
-# Build static binary with CGo (required for pg_query_go)
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+# Build static binary with CGo (required for pg_query_go).
+# Do NOT hardcode GOARCH — it breaks Apple Silicon builds. Go's default matches
+# the build host, and `docker buildx` sets TARGETARCH for cross-builds.
+ARG TARGETARCH
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags="-w -s -linkmode external -extldflags '-static'" \
     -o faultwall .
 
