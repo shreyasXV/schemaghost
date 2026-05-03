@@ -470,7 +470,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		// Simple query protocol: type 'Q'
 		if msgType == 'Q' && len(payload) > 1 {
 			query := string(payload[:len(payload)-1])
+			decisionStart := time.Now()
 			violation := safeCheckQuery(pe, identity, query)
+			decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 			// Track this query in the agent tracker
 			if agentTracker != nil && identity != nil {
@@ -481,7 +483,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				violation.Action = "blocked"
 				pe.addViolation(*violation)
 				clientWriteMu.Lock()
-				sendBlockedResponse(client, violation)
+				sendBlockedResponse(client, violation, decisionLatencyMs)
 				clientWriteMu.Unlock()
 				logBlocked(agentLabel, query, violation)
 				continue
@@ -502,7 +504,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			stmtName, query := extractParseMessage(payload)
 
 			if query != "" {
+				decisionStart := time.Now()
 				violation := safeCheckQuery(pe, identity, query)
+				decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 				// Track this query in the agent tracker
 				if agentTracker != nil && identity != nil {
@@ -520,7 +524,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					// then send ErrorResponse + ReadyForQuery
 					drainUntilSync(client)
 					clientWriteMu.Lock()
-					sendExtendedBlockedResponse(client, violation)
+					sendExtendedBlockedResponse(client, violation, decisionLatencyMs)
 					clientWriteMu.Unlock()
 					logBlocked(agentLabel, query, violation)
 					continue
@@ -719,13 +723,19 @@ func drainUntilSync(client net.Conn) {
 }
 
 // sendExtendedBlockedResponse sends ErrorResponse + ReadyForQuery for blocked extended queries.
-func sendExtendedBlockedResponse(client net.Conn, v *PolicyViolation) {
+// latencyMs is the decision time in milliseconds — appended to the error message as [<n>ms]
+// so the client sees FaultWall's sub-ms overhead in-band. Preempts the "doesn't this add
+// latency?" objection without requiring a separate dashboard view.
+func sendExtendedBlockedResponse(client net.Conn, v *PolicyViolation, latencyMs float64) {
 	detail := v.Reason
 	if v.Table != "" {
 		detail += " (table: " + v.Table + ")"
 	}
 	if v.Operation != "" {
 		detail += " (op: " + v.Operation + ")"
+	}
+	if latencyMs >= 0 {
+		detail += fmt.Sprintf(" [%.2fms]", latencyMs)
 	}
 
 	errResp := &pgproto3.ErrorResponse{
@@ -780,13 +790,19 @@ func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (v 
 }
 
 // sendBlockedResponse sends an ErrorResponse + ReadyForQuery to the client.
-func sendBlockedResponse(client net.Conn, v *PolicyViolation) {
+// latencyMs is the decision time in milliseconds, appended as [<n>ms] to the
+// error message so the client sees FaultWall's sub-ms decision overhead
+// in-band on every blocked query. Pass a negative value to suppress.
+func sendBlockedResponse(client net.Conn, v *PolicyViolation, latencyMs float64) {
 	detail := v.Reason
 	if v.Table != "" {
 		detail += " (table: " + v.Table + ")"
 	}
 	if v.Operation != "" {
 		detail += " (op: " + v.Operation + ")"
+	}
+	if latencyMs >= 0 {
+		detail += fmt.Sprintf(" [%.2fms]", latencyMs)
 	}
 
 	errResp := &pgproto3.ErrorResponse{
