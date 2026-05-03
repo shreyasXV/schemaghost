@@ -78,6 +78,7 @@ type AgentPolicy struct {
 	Missions          map[string]MissionPolicy `yaml:"missions" json:"missions"`
 	BlockedOperations []string                 `yaml:"blocked_operations" json:"blocked_operations"`
 	BlockedTables     []string                 `yaml:"blocked_tables" json:"blocked_tables"`
+	BlockedColumns    map[string][]string      `yaml:"blocked_columns" json:"blocked_columns"` // table -> blocked column names (lowercase). Fires when the listed table is referenced AND any listed column appears in the query.
 	AllowedFunctions  []string                 `yaml:"allowed_functions" json:"allowed_functions"`
 }
 
@@ -771,6 +772,55 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		}
 	}
 
+	// Check blocked columns (per-table column denylist).
+	//
+	// Policy semantics: if a query references a table T listed in blocked_columns
+	// AND any column name in parsed.Columns appears in blocked_columns[T], the
+	// query is denied with reason "blocked_column:<table>.<col>". This catches:
+	//
+	//   SELECT ssn FROM users          → denied
+	//   SELECT u.ssn FROM users u      → denied (parser extracts both "u" and "ssn")
+	//   SELECT email FROM users WHERE ssn = ?  → denied (WHERE-clause references)
+	//   UPDATE users SET ssn = ?       → denied (SET target)
+	//
+	// Behavior notes:
+	//   - SELECT * does NOT trigger a column-level block by itself; the parser
+	//     records no column names for the star target. Pair BlockedColumns with
+	//     BlockedTables when the entire table is off-limits.
+	//   - Multi-table queries that reference a blocked column name on any of the
+	//     listed tables deny the whole query (fail-closed). Schema resolution is
+	//     not performed — if an unqualified column name matches a blocklist
+	//     entry for a referenced table, the query is denied even if the column
+	//     actually originates from a different, un-listed table. This is the
+	//     conservative choice for a security product.
+	//   - Config keys may be unqualified ("users") or qualified ("public.users").
+	//     Matching is case-insensitive and handles either form on either side.
+	if len(agentPolicy.BlockedColumns) > 0 && len(parsed.Columns) > 0 {
+		for blockedTable, blockedCols := range agentPolicy.BlockedColumns {
+			if !isAnyTableReferenced(blockedTable, tables) {
+				continue
+			}
+			for _, bc := range blockedCols {
+				bcLower := strings.ToLower(bc)
+				for _, qc := range parsed.Columns {
+					if qc == bcLower {
+						return &PolicyViolation{
+							AgentID:   identity.AgentID,
+							MissionID: identity.MissionID,
+							Query:     truncateQuery(query),
+							Reason:    "blocked_column:" + blockedTable + "." + bcLower,
+							Table:     blockedTable,
+							Operation: operation,
+							PID:       pid,
+							Action:    "pending",
+							Timestamp: time.Now(),
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Check mission policy
 	//
 	// Historical note (bug #3 from docs/compatibility.md, fixed Apr 27):
@@ -1225,6 +1275,36 @@ func isTableBlocked(table string, blockedList []string) bool {
 			blockedLeaf = blockedLower[idx+1:]
 		}
 		if tableLeaf == blockedLeaf {
+			return true
+		}
+	}
+	return false
+}
+
+// isAnyTableReferenced reports whether the blocked_columns key `target` refers
+// to any of the tables extracted from the query. Matching is case-insensitive
+// and schema-agnostic: a config key of "users" matches a referenced
+// "public.users", and a key of "public.users" matches a referenced "users".
+// Used by the BlockedColumns enforcement in CheckQuery.
+func isAnyTableReferenced(target string, referenced []string) bool {
+	t := strings.ToLower(strings.TrimSpace(target))
+	if t == "" {
+		return false
+	}
+	tLeaf := t
+	if idx := strings.LastIndex(t, "."); idx >= 0 {
+		tLeaf = t[idx+1:]
+	}
+	for _, r := range referenced {
+		rLower := strings.ToLower(r)
+		if rLower == t {
+			return true
+		}
+		rLeaf := rLower
+		if idx := strings.LastIndex(rLower, "."); idx >= 0 {
+			rLeaf = rLower[idx+1:]
+		}
+		if tLeaf == rLeaf {
 			return true
 		}
 	}
